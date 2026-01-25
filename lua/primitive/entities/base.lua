@@ -391,7 +391,9 @@ function class:Think()
         local physobj = self:GetPhysicsObject()
 
         if physobj:IsValid() then
-            physobj:Sleep()
+            physobj:EnableMotion( false )
+            physobj:SetPos( self:GetPos() )
+            physobj:SetAngles( self:GetAngles() )
         end
     end
 end
