@@ -146,7 +146,7 @@ if SERVER then
         if isnumber( props.mass ) then physobj:SetMass( props.mass ) end
         if istable( props.physprop ) then
             if isbool( props.physprop.Gravity ) then physobj:EnableGravity( props.physprop.Gravity ) end
-            if isstring( props.physprop.Material ) ~= nil then physobj:SetMaterial( props.physprop.Material ) end
+            if isstring( props.physprop.Material ) then physobj:SetMaterial( props.physprop.Material ) end
         end
 
         if isentity( props.parent ) and props.parent:IsValid() then
