@@ -35,7 +35,7 @@ end
 
 if CLIENT then
     hook.Add( "Primitive_PreRefreshMenu", "Primitive_AddSpawnlists", function( globalSpawnlist )
-        for class, spawnlist in pairs( Primitive.classes ) do
+        for _class, spawnlist in pairs( Primitive.classes ) do
             -- for _, entry in pairs( spawnlist ) do
             --     table.insert( globalSpawnlist, entry )
             -- end
@@ -72,7 +72,7 @@ if SERVER then
         return ent
     end
 
-    concommand.Add( "primitive_spawn", function( ply, cmd, args )
+    concommand.Add( "primitive_spawn", function( ply, _, args )
         if not IsValid( ply ) or not Primitive or not Primitive.classes then return end
 
         local class = table.remove( args, 1 )
@@ -150,7 +150,7 @@ do
 
         output = nil
 
-        timer.Destroy( "primitive_log" )
+        timer.Remove( "primitive_log" )
     end
 
 

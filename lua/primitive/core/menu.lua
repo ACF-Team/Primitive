@@ -5,7 +5,7 @@ properties.Add( "editprimitive", {
     PrependSpacer = true,
     Order = 90001,
 
-    Filter = function( self, ent, ply )
+    Filter = function( _, ent, ply )
         if not IsValid( ent ) then return false end
         if not scripted_ents.IsBasedOn( ent:GetClass(), "primitive_base" ) then return false end
         if not gamemode.Call( "CanProperty", ply, "editprimitive", ent ) then return false end
@@ -13,7 +13,7 @@ properties.Add( "editprimitive", {
         return true
     end,
 
-    Action = function( self, ent )
+    Action = function( _, ent )
         local window = g_ContextMenu:Add( "DFrame" )
         local h = math.Round( ScrH() / 2 ) * 2
         local w = math.Round( ScrW() / 2 ) * 2
@@ -35,7 +35,7 @@ properties.Add( "editprimitive", {
         end
     end,
 
-    MenuOpen = function( self, menu )
+    MenuOpen = function( _, menu )
         menu.m_Image:SetImage( "primitive/icons/primitive.png", "icon16/brick_edit.png" )
     end,
  } )
@@ -45,7 +45,7 @@ if SERVER then return end
 local function refresh( node )
     node.m_SetRefresh = nil
 
-    node.SetExpanded = function( self, bExpand, bSurpressAnimation )
+    node.SetExpanded = function( self, bExpand )
         DTree_Node.SetExpanded( self, bExpand, false )
         cookie.Set( "PrimitiveMenuExpand", self:GetExpanded() and 1 or 0 )
     end
@@ -94,7 +94,7 @@ local function refresh( node )
 
             local admin = scripted_ents.GetMember( info.entity, "AdminOnly" )
             local spawn = categories[info.category]:AddNode( info.title, admin and "icon16/shield.png" or "icon16/bullet_white.png" )
-            if not admin then spawn.Icon:SetImageColor( Color( 18, 149, 241 ) ) else spawn:SetToolTip( "admin only" ) end
+            if not admin then spawn.Icon:SetImageColor( Color( 18, 149, 241 ) ) else spawn:SetTooltip( "admin only" ) end
 
             spawn.DoClick = function()
                 LocalPlayer():ConCommand( string.format( "primitive_spawn %s %s", info.entity, info.command ) )
@@ -125,7 +125,7 @@ local function refresh( node )
     node:ExpandRecurse( tobool( cookie.GetNumber( "PrimitiveMenuExpand", 0 ) ) )
 end
 
-hook.Add( "PopulateContent", "Primitive_CreateMenu", function( pnlContent, tree, node )
+hook.Add( "PopulateContent", "Primitive_CreateMenu", function( _, tree )
     if IsValid( Primitive_SpawnMenu ) then
         Primitive_SpawnMenu:Remove()
     end
