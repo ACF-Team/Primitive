@@ -3,7 +3,7 @@ do
     local class = {}
 
     local typen = { "cone", "cube", "cube_magic", "cube_hole", "cylinder", "dome", "parallelogram", "plane", "pyramid", "sphere", "torus", "tube", "wedge", "wedge_corner" }
-    local typek, defaults = {}, {}
+    local typek, unitk, defaults = {}, { source = "source", millimeters = "millimeters" }, {}
 
     do
         for k, v in pairs( typen ) do
@@ -22,6 +22,7 @@ do
                 PrimSUBDIV = 8,
                 PrimTX = 0,
                 PrimTY = 0,
+                PrimUNITS = "source",
             },
             cone = {
                 PrimMAXSEG = 16,
@@ -165,6 +166,7 @@ do
 
     function class:PrimitiveSetupDataTables()
         self:PrimitiveVar( "PrimTYPE", "String", { category = "modify", title = "type", panel = "combo", values = typek, icons = "primitive/icons/%s.png" }, true )
+        self:PrimitiveVar( "PrimUNITS", "String", { global = true, category = "modify", title = "units", panel = "combo", values = unitk }, true )
         self:PrimitiveVar( "PrimSIZE", "Vector", { category = "modify", title = "size", panel = "vector", min = Vector( 1, 1, 1 ), max = Vector( 1000, 1000, 1000 ) }, true )
 
         self:PrimitiveVar( "PrimDT", "Float", { category = "modify", title = "thickness", panel = "float", min = 1, max = 1000 }, true )
@@ -383,6 +385,7 @@ do
 
     function class:PrimitiveSetupDataTables()
         self:PrimitiveVar( "PrimTYPE", "String", { category = "modify", title = "type", panel = "combo", values = typek, icons = "primitive/icons/%s.png" }, true )
+        self:PrimitiveVar( "PrimUNITS", "String", { global = true, category = "modify", title = "units", panel = "combo", values = unitk }, true )
         self:PrimitiveVar( "PrimSIZE", "Vector", { category = "modify", title = "size", panel = "vector", min = Vector( 1, 1, 1 ), max = Vector( 1000, 1000, 1000 ) }, true )
 
         -- self:PrimitiveVar( "PrimDT", "Float", { category = "modify", title = "thickness", panel = "float", min = 1, max = 1000 }, true )
