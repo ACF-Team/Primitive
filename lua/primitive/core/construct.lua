@@ -12,8 +12,8 @@ local addon = Primitive
 local bit, math, util, table, isvector, WorldToLocal, LocalToWorld, Vector, Angle =
       bit, math, util, table, isvector, WorldToLocal, LocalToWorld, Vector, Angle
 
-local math_abs, math_sin, math_cos, math_tan, math_asin, math_acos, math_atan, math_atan2, math_rad, math_deg, math_sqrt =
-      math.abs, math.sin, math.cos, math.tan, math.asin, math.acos, math.atan, math.atan2, math.rad, math.deg, math.sqrt
+local math_abs, math_sin, math_cos, math_asin, math_acos, math_atan, math_atan2, math_rad, math_deg, math_sqrt =
+      math.abs, math.sin, math.cos, math.asin, math.acos, math.atan, math.atan2, math.rad, math.deg, math.sqrt
 
 local math_ceil, math_floor, math_round, math_min, math_max, math_clamp =
       math.ceil, math.floor, math.Round, math.min, math.max, math.Clamp
@@ -270,6 +270,15 @@ do
             either a function or a coroutine that will build the mesh
     --]]
     function addon.construct.get( name, param, threaded, physics )
+        if param and param.PrimUNITS == "millimeters" then
+            param = table.Copy( param )
+            if isvector( param.PrimSIZE ) then
+                local s = param.PrimSIZE * 0.03937
+                param.PrimSIZE = Vector( math_max( s.x, 1 ), math_max( s.y, 1 ), math_max( s.z, 1 ) )
+            end
+            if isnumber( param.PrimDT ) then param.PrimDT = math_max( param.PrimDT * 0.03937, 1 ) end
+            if isnumber( param.PrimSLANT ) then param.PrimSLANT = param.PrimSLANT * 0.03937 end
+        end
         return addon.construct.generate( construct_types[name], param, threaded, physics )
     end
 end
@@ -1918,6 +1927,96 @@ registerType( "dome", function( param, data, threaded, physics )
 end, { canThread = true, domePlane = { pos = Vector(), normal = Vector( 0, 0, 1 ) } } )
 
 
+-- DOME_HOLLOW
+-- Pushes interleaved outer+inner hemisphere verts into model over rings+1 latitude bands.
+-- Each position v in ring r stores [outer, inner] consecutively; twoRing = 2*(sdiv+1) gives the same place on the next ring.
+local function pushHollowRings( model, rings, sdiv, dx, dy, dz, idx, idy, idz )
+    for r = 0, rings do
+        local t = math_pi * 0.5 * ( 1 - r / rings )
+        local sinT, cosT = math_sin( t ), math_cos( t )
+        for v = 0, sdiv do
+            local p = math_tau * v / sdiv
+            model:PushXYZ( -dx  * math_cos( p ) * sinT, dy  * math_sin( p ) * sinT, dz  * cosT )  -- outer
+            model:PushXYZ( -idx * math_cos( p ) * sinT, idy * math_sin( p ) * sinT, idz * cosT )  -- inner
+        end
+    end
+end
+
+registerType( "dome_hollow", function( param, data, threaded, physics )
+    local subdiv = 2 * math_round( ( param.PrimSUBDIV or 8 ) / 2 )
+    if subdiv < 4 then subdiv = 4 elseif subdiv > 32 then subdiv = 32 end
+
+    local dx = ( isvector( param.PrimSIZE ) and param.PrimSIZE[1] or 1 ) * 0.5
+    local dy = ( isvector( param.PrimSIZE ) and param.PrimSIZE[2] or 1 ) * 0.5
+    local dz = ( isvector( param.PrimSIZE ) and param.PrimSIZE[3] or 1 ) * 0.5
+    local dt = math_max( math_min( param.PrimDT or 1, dx - 1, dy - 1, dz - 1 ), 1 )
+
+    local idx = dx - dt
+    local idy = dy - dt
+    local idz = dz - dt
+
+    local numRings = subdiv / 2
+    local ringSize = subdiv + 1     -- verts per ring: subdiv segments need subdiv+1 verts to close the loop
+    local twoRing  = ringSize * 2   -- stride per ring in interleaved layout
+
+    local model = simpleton.New()
+
+    if CLIENT then
+        pushHollowRings( model, numRings, subdiv, dx, dy, dz, idx, idy, idz )
+
+        -- Emit quad strips between adjacent rings. Each ring occupies twoRing slots,
+        -- so adding twoRing to an index moves to the same position one ring toward the apex.
+        for r = 1, numRings do
+            for v = 0, subdiv - 1 do
+                local a = 1 + ( r - 1 ) * twoRing + v * 2  -- bottom-left outer
+                local d = a + twoRing                       -- top-left outer
+                model:PushFace( d, d + 2, a + 2, a )           -- outer, outward normals
+                model:PushFace( a + 1, a + 3, d + 3, d + 1 )  -- inner, inward normals
+            end
+        end
+
+        -- Close the open bottom edge with a ring of rim quads connecting outer equator to inner equator.
+        for v = 0, subdiv - 1 do
+            local ao = 1 + v * 2
+            model:PushFace( ao, ao + 2, ao + 3, ao + 1 )  -- rim, downward normals
+        end
+
+        util_Transform( model.verts, param.PrimMESHROT, param.PrimMESHPOS, threaded )
+    end
+
+    if physics then
+        -- Physics uses a lower subdivision cap to keep the convex count reasonable.
+        local physSubdiv  = math_min( subdiv, 8 )
+        local physRings   = physSubdiv / 2
+        local physRingSz  = physSubdiv + 1
+        local physTwoRing = physRingSz * 2
+        local physModel   = simpleton.New()
+        local physVerts   = physModel.verts
+
+        pushHollowRings( physModel, physRings, physSubdiv, dx, dy, dz, idx, idy, idz )
+
+        -- One convex per patch: four outer corners + four inner corners of each wall quad.
+        -- This approximates the hollow shell as a set of thin wedge-shaped convex hulls.
+        local convexes = {}
+        for r = 0, physRings - 1 do
+            for v = 0, physSubdiv - 1 do
+                local oa = 1 + r * physTwoRing + v * 2  -- bottom-left outer
+                local od = oa + physTwoRing             -- top-left outer
+                convexes[#convexes + 1] = {
+                    physVerts[oa],     physVerts[oa + 2], physVerts[od],     physVerts[od + 2],  -- outer quad corners
+                    physVerts[oa + 1], physVerts[oa + 3], physVerts[od + 1], physVerts[od + 3],  -- inner quad corners
+                }
+            end
+        end
+
+        model.convexes = convexes
+        util_Transform( physVerts, param.PrimMESHROT, param.PrimMESHPOS, threaded )
+    end
+
+    return model
+end )
+
+
 -- PLANE
 registerType( "plane", function( param, data, threaded, physics )
     local dx = ( isvector( param.PrimSIZE ) and param.PrimSIZE[1] or 1 ) * 0.5
@@ -2357,6 +2456,47 @@ registerType( "wedge_corner", function( param, data, threaded, physics )
         model:PushTriangle( 2, 1, 4 )
         model:PushTriangle( 3, 2, 4 )
         model:PushTriangle( 1, 2, 3 )
+    end
+
+    if physics then
+        model.convexes = { verts }
+    end
+
+    util_Transform( verts, param.PrimMESHROT, param.PrimMESHPOS, threaded )
+
+    return model
+end )
+
+
+-- PARALLELOGRAM
+registerType( "parallelogram", function( param, data, threaded, physics )
+    local dx = ( isvector( param.PrimSIZE ) and param.PrimSIZE[1] or 1 ) * 0.5
+    local dy = ( isvector( param.PrimSIZE ) and param.PrimSIZE[2] or 1 ) * 0.5
+    local dz = ( isvector( param.PrimSIZE ) and param.PrimSIZE[3] or 1 ) * 0.5
+
+    local shift = tonumber( param.PrimSLANT ) or 0
+
+    local model = simpleton.New()
+    local verts = model.verts
+
+    -- Bottom face at z=-dz is unshifted; all horizontal offset goes to the top face.
+    -- The entity origin sits at the center of the bottom face.
+    model:PushXYZ(  dx,          dy, -dz )  -- 1 bottom y+ x+
+    model:PushXYZ(  dx,         -dy, -dz )  -- 2 bottom y- x+
+    model:PushXYZ( -dx,         -dy, -dz )  -- 3 bottom y- x-
+    model:PushXYZ( -dx,          dy, -dz )  -- 4 bottom y+ x-
+    model:PushXYZ(  dx + shift,  dy,  dz )  -- 5 top y+ x+
+    model:PushXYZ(  dx + shift, -dy,  dz )  -- 6 top y- x+
+    model:PushXYZ( -dx + shift, -dy,  dz )  -- 7 top y- x-
+    model:PushXYZ( -dx + shift,  dy,  dz )  -- 8 top y+ x-
+
+    if CLIENT then
+        model:PushFace( 1, 2, 3, 4 )  -- bottom (-z)
+        model:PushFace( 5, 8, 7, 6 )  -- top (+z)
+        model:PushFace( 1, 4, 8, 5 )  -- y+ side
+        model:PushFace( 2, 6, 7, 3 )  -- y- side
+        model:PushFace( 2, 1, 5, 6 )  -- x+ side (slanted)
+        model:PushFace( 4, 3, 7, 8 )  -- x- side (slanted)
     end
 
     if physics then

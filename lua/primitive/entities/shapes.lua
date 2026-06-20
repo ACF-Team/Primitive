@@ -2,8 +2,8 @@
 do
     local class = {}
 
-    local typen = { "cone", "cube", "cube_magic", "cube_hole", "cylinder", "dome", "plane", "pyramid", "sphere", "torus", "tube", "wedge", "wedge_corner" }
-    local typek, defaults = {}, {}
+    local typen = { "cone", "cube", "cube_magic", "cube_hole", "cylinder", "dome", "dome_hollow", "parallelogram", "plane", "pyramid", "sphere", "torus", "tube", "wedge", "wedge_corner" }
+    local typek, unitk, defaults = {}, { source = "source", millimeters = "millimeters" }, {}
 
     do
         for k, v in pairs( typen ) do
@@ -18,9 +18,11 @@ do
                 PrimNUMSEG = 16,
                 PrimSIDES = 0,
                 PrimSIZE = Vector( 48, 48, 48 ),
+                PrimSLANT = 0,
                 PrimSUBDIV = 8,
                 PrimTX = 0,
                 PrimTY = 0,
+                PrimUNITS = "source",
             },
             cone = {
                 PrimMAXSEG = 16,
@@ -69,6 +71,19 @@ do
                 PrimSIZE = Vector( 48, 48, 48 ),
                 PrimSUBDIV = 8,
                 PrimTYPE = "dome",
+            },
+            dome_hollow = {
+                PrimDT = 4,
+                PrimMESHSMOOTH = 65,
+                PrimSIZE = Vector( 48, 48, 48 ),
+                PrimSUBDIV = 8,
+                PrimTYPE = "dome_hollow",
+            },
+            parallelogram = {
+                PrimMESHSMOOTH = 0,
+                PrimSIZE = Vector( 48, 48, 48 ),
+                PrimSLANT = 0,
+                PrimTYPE = "parallelogram",
             },
             plane = {
                 PrimMESHSMOOTH = 0,
@@ -158,11 +173,13 @@ do
 
     function class:PrimitiveSetupDataTables()
         self:PrimitiveVar( "PrimTYPE", "String", { category = "modify", title = "type", panel = "combo", values = typek, icons = "primitive/icons/%s.png" }, true )
+        self:PrimitiveVar( "PrimUNITS", "String", { global = true, category = "modify", title = "units", panel = "combo", values = unitk }, true )
         self:PrimitiveVar( "PrimSIZE", "Vector", { category = "modify", title = "size", panel = "vector", min = Vector( 1, 1, 1 ), max = Vector( 1000, 1000, 1000 ) }, true )
 
         self:PrimitiveVar( "PrimDT", "Float", { category = "modify", title = "thickness", panel = "float", min = 1, max = 1000 }, true )
         self:PrimitiveVar( "PrimTX", "Float", { category = "modify", title = "taper x", panel = "float", min = -1, max = 1 }, true )
         self:PrimitiveVar( "PrimTY", "Float", { category = "modify", title = "taper y", panel = "float", min = -1, max = 1 }, true )
+        self:PrimitiveVar( "PrimSLANT", "Float", { category = "modify", title = "overhang", panel = "float", min = -1000, max = 1000 }, true )
 
         self:PrimitiveVar( "PrimSUBDIV", "Int", { category = "modify", title = "subdivide", panel = "int", min = 1, max = 32 }, true )
         self:PrimitiveVar( "PrimMAXSEG", "Int", { category = "modify", title = "max segments", panel = "int", min = 1, max = 32 }, true )
@@ -180,6 +197,8 @@ do
             { category = "shapes", entity = "primitive_shape", title = "cube_hole", command = "cube_hole 1 48" },
             { category = "shapes", entity = "primitive_shape", title = "cylinder", command = "cylinder 1 48" },
             { category = "shapes", entity = "primitive_shape", title = "dome", command = "dome 1 48" },
+            { category = "shapes", entity = "primitive_shape", title = "dome_hollow", command = "dome_hollow 1 48" },
+            { category = "shapes", entity = "primitive_shape", title = "parallelogram", command = "parallelogram 1 48" },
             { category = "shapes", entity = "primitive_shape", title = "plane", command = "plane 1 48" },
             { category = "shapes", entity = "primitive_shape", title = "pyramid", command = "pyramid 1 48" },
             { category = "shapes", entity = "primitive_shape", title = "sphere", command = "sphere 1 48" },
@@ -374,6 +393,7 @@ do
 
     function class:PrimitiveSetupDataTables()
         self:PrimitiveVar( "PrimTYPE", "String", { category = "modify", title = "type", panel = "combo", values = typek, icons = "primitive/icons/%s.png" }, true )
+        self:PrimitiveVar( "PrimUNITS", "String", { global = true, category = "modify", title = "units", panel = "combo", values = unitk }, true )
         self:PrimitiveVar( "PrimSIZE", "Vector", { category = "modify", title = "size", panel = "vector", min = Vector( 1, 1, 1 ), max = Vector( 1000, 1000, 1000 ) }, true )
 
         -- self:PrimitiveVar( "PrimDT", "Float", { category = "modify", title = "thickness", panel = "float", min = 1, max = 1000 }, true )
