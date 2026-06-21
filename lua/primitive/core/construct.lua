@@ -270,14 +270,14 @@ do
             either a function or a coroutine that will build the mesh
     --]]
     function addon.construct.get( name, param, threaded, physics )
-        if param and param.PrimUNITS == "millimeters" then
+        if param and param.PrimUNITS == "centimeters" then
             param = table.Copy( param )
             if isvector( param.PrimSIZE ) then
-                local s = param.PrimSIZE * 0.03937
+                local s = param.PrimSIZE * 0.3937
                 param.PrimSIZE = Vector( math_max( s.x, 1 ), math_max( s.y, 1 ), math_max( s.z, 1 ) )
             end
-            if isnumber( param.PrimDT ) then param.PrimDT = math_max( param.PrimDT * 0.03937, 1 ) end
-            if isnumber( param.PrimSLANT ) then param.PrimSLANT = param.PrimSLANT * 0.03937 end
+            if isnumber( param.PrimDT ) then param.PrimDT = math_max( param.PrimDT * 0.3937, 1 ) end
+            if isnumber( param.PrimSLANT ) then param.PrimSLANT = param.PrimSLANT * 0.3937 end
         end
         return addon.construct.generate( construct_types[name], param, threaded, physics )
     end
