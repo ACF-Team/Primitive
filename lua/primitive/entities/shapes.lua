@@ -3,7 +3,7 @@ do
     local class = {}
 
     local typen = { "cone", "cube", "cube_magic", "cube_hole", "cylinder", "dome", "dome_hollow", "parallelogram", "plane", "pyramid", "sphere", "torus", "tube", "wedge", "wedge_corner" }
-    local typek, unitk, defaults = {}, { source = "source", millimeters = "millimeters" }, {}
+    local typek, unitk, defaults = {}, { source = "source", centimeters = "centimeters" }, {}
 
     do
         for k, v in pairs( typen ) do
