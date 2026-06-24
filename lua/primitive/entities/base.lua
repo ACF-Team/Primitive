@@ -621,6 +621,28 @@ do
         end
     end)
 
+    -- Re-apply any proper_clipping physics clips after each primitive reconstruction.
+    -- Primitives reinitialize via PhysicsInitMultiConvex on every reconstruction, which wipes the clips
+    -- Bypass the race condition by preserving existing clips on rebuild
+    hook.Add("Primitive_PostRebuildPhysics", "Primitive_ProperClipping", function( ent )
+        if not ent.Clipped or not istable( ent.ClipData ) then return end -- no clips to reapply
+        if not ProperClipping or not isfunction( ProperClipping.ClipPhysics ) then return end -- proper_clipping not installed
+
+        -- Aggregate all physics clips
+        local norms, dists = {}, {}
+        local count = 0
+        for _, clip in ipairs( ent.ClipData ) do
+            if clip.physics then
+                count = count + 1
+                norms[count] = clip.norm
+                dists[count] = clip.dist
+            end
+        end
+
+        if count == 0 then return end -- no physics clips to reapply
+
+        ProperClipping.ClipPhysics( ent, norms, dists, true )
+    end)
 end
 
 
