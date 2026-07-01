@@ -14,9 +14,9 @@ do
 
         self:PrimitiveVar( "PrimSCOUNT", "Int", { category = category, title = "step count", panel = "int", min = 1, max = 32 }, true )
         self:PrimitiveVar( "PrimSHEIGHT", "Float", { category = category, title = "step height", panel = "float", min = 1, max = 50 }, true )
-        self:PrimitiveVar( "PrimRDIM", "Vector", { category = category, title = "rung size", panel = "vector", min = Vector( 1, 1, 1 ), max = Vector( 1000, 1000, 50 ) }, true )
+        self:PrimitiveVar( "PrimRDIM", "Vector", { category = category, title = "rung size", panel = "vector", min = Vector( MinSize, MinSize, MinSize ), max = Vector( 1000, 1000, 50 ) }, true )
 
-        self:PrimitiveVar( "PrimXDIM", "Vector", { category = category, title = "rail size", panel = "vector", min = Vector( 1, 1, 0 ), max = Vector( 1000, 1000, 50 ) }, true )
+        self:PrimitiveVar( "PrimXDIM", "Vector", { category = category, title = "rail size", panel = "vector", min = Vector( MinSize, MinSize, 0 ), max = Vector( 1000, 1000, 50 ) }, true )
 
     end
 
@@ -134,7 +134,7 @@ do
     function class:PrimitiveSetupDataTables()
         self:PrimitiveVar( "PrimBASE", "Bool", { category = "base", title = "enabled", panel = "bool" }, true )
         self:PrimitiveVar( "PrimBPOS", "Vector", { category = "base", title = "offset", panel = "vector", min = Vector( -500, -500, -500 ), max = Vector( 500, 500, 500) }, true )
-        self:PrimitiveVar( "PrimBDIM", "Vector", { category = "base", title = "size", panel = "vector", min = Vector( 1, 1, 1 ), max = Vector( 100, 100, 100) }, true )
+        self:PrimitiveVar( "PrimBDIM", "Vector", { category = "base", title = "size", panel = "vector", min = Vector( MinSize, MinSize, MinSize ), max = Vector( 100, 100, 100) }, true )
 
         local types = { wedge = "slider_wedge", spike = "slider_spike", cube = "slider_cube", blade = "slider_blade" }
         self:PrimitiveVar( "PrimCTYPE", "String", { category = "contact point", title = "type", panel = "combo", values = types }, true )
@@ -144,7 +144,7 @@ do
         self:PrimitiveVar( "PrimCGAP", "Float", { category = "contact point", title = "gap", panel = "float", min = 0, max = 100 }, true )
         self:PrimitiveVar( "PrimCPOS", "Vector", { category = "contact point", title = "offset", panel = "vector", min = Vector( 0, 0, 0 ), max = Vector( 500, 500, 500) }, true )
         self:PrimitiveVar( "PrimCROT", "Angle", { category = "contact point", title = "rotate", panel = "angle" }, true )
-        self:PrimitiveVar( "PrimCDIM", "Vector", { category = "contact point", title = "size", panel = "vector", min = Vector( 1, 1, 1 ), max = Vector( 100, 100, 100) }, true )
+        self:PrimitiveVar( "PrimCDIM", "Vector", { category = "contact point", title = "size", panel = "vector", min = Vector( MinSize, MinSize, MinSize ), max = Vector( 100, 100, 100) }, true )
 
         local types = { wedge = "slider_wedge", spike = "slider_spike", cube = "slider_cube", blade = "slider_blade" }
         self:PrimitiveVar( "PrimFTYPE", "String", { category = "flange", title = "type", panel = "combo", values = types }, true )

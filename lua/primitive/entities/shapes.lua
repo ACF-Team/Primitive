@@ -1,6 +1,7 @@
 
 do
     local class = {}
+    local MinSize = Primitive.minSize
 
     local typen = { "cone", "cube", "cube_magic", "cube_hole", "cylinder", "dome", "dome_hollow", "parallelogram", "plane", "pyramid", "sphere", "torus", "tube", "wedge", "wedge_corner" }
     local typek, unitk, defaults = {}, { source = "source", centimeters = "centimeters" }, {}
@@ -174,9 +175,9 @@ do
     function class:PrimitiveSetupDataTables()
         self:PrimitiveVar( "PrimTYPE", "String", { category = "modify", title = "type", panel = "combo", values = typek, icons = "primitive/icons/%s.png" }, true )
         self:PrimitiveVar( "PrimUNITS", "String", { global = true, category = "modify", title = "units", panel = "combo", values = unitk }, true )
-        self:PrimitiveVar( "PrimSIZE", "Vector", { category = "modify", title = "size", panel = "vector", min = Vector( 1, 1, 1 ), max = Vector( 1000, 1000, 1000 ) }, true )
+        self:PrimitiveVar( "PrimSIZE", "Vector", { category = "modify", title = "size", panel = "vector", min = Vector( MinSize, MinSize, MinSize ), max = Vector( 1000, 1000, 1000 ) }, true )
 
-        self:PrimitiveVar( "PrimDT", "Float", { category = "modify", title = "thickness", panel = "float", min = 1, max = 1000 }, true )
+        self:PrimitiveVar( "PrimDT", "Float", { category = "modify", title = "thickness", panel = "float", min = MinSize, max = 1000 }, true )
         self:PrimitiveVar( "PrimTX", "Float", { category = "modify", title = "taper x", panel = "float", min = -1, max = 1 }, true )
         self:PrimitiveVar( "PrimTY", "Float", { category = "modify", title = "taper y", panel = "float", min = -1, max = 1 }, true )
         self:PrimitiveVar( "PrimSLANT", "Float", { category = "modify", title = "overhang", panel = "float", min = -1000, max = 1000 }, true )
@@ -394,7 +395,7 @@ do
     function class:PrimitiveSetupDataTables()
         self:PrimitiveVar( "PrimTYPE", "String", { category = "modify", title = "type", panel = "combo", values = typek, icons = "primitive/icons/%s.png" }, true )
         self:PrimitiveVar( "PrimUNITS", "String", { global = true, category = "modify", title = "units", panel = "combo", values = unitk }, true )
-        self:PrimitiveVar( "PrimSIZE", "Vector", { category = "modify", title = "size", panel = "vector", min = Vector( 1, 1, 1 ), max = Vector( 1000, 1000, 1000 ) }, true )
+        self:PrimitiveVar( "PrimSIZE", "Vector", { category = "modify", title = "size", panel = "vector", min = Vector( primitiveMinSize, primitiveMinSize, primitiveMinSize ), max = Vector( 1000, 1000, 1000 ) }, true )
 
         -- self:PrimitiveVar( "PrimDT", "Float", { category = "modify", title = "thickness", panel = "float", min = 1, max = 1000 }, true )
         -- self:PrimitiveVar( "PrimTX", "Float", { category = "modify", title = "taper x", panel = "float", min = -1, max = 1 }, true )

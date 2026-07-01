@@ -6,7 +6,7 @@
 -------------------------------
 -- Feel free to use this file in your projects, but please change the below global table to your addon
 local addon = Primitive
-
+local MinSize = Primitive.minSize
 
 -------------------------------
 local bit, math, util, table, isvector, WorldToLocal, LocalToWorld, Vector, Angle =
@@ -274,9 +274,9 @@ do
             param = table.Copy( param )
             if isvector( param.PrimSIZE ) then
                 local s = param.PrimSIZE * 0.3937
-                param.PrimSIZE = Vector( math_max( s.x, 1 ), math_max( s.y, 1 ), math_max( s.z, 1 ) )
+                param.PrimSIZE = Vector( math_max( s.x, MinSize ), math_max( s.y, MinSize ), math_max( s.z, MinSize ) )
             end
-            if isnumber( param.PrimDT ) then param.PrimDT = math_max( param.PrimDT * 0.3937, 1 ) end
+            if isnumber( param.PrimDT ) then param.PrimDT = math_max( param.PrimDT * 0.3937, MinSize ) end
             if isnumber( param.PrimSLANT ) then param.PrimSLANT = param.PrimSLANT * 0.3937 end
         end
         return addon.construct.generate( construct_types[name], param, threaded, physics )
@@ -1949,7 +1949,7 @@ registerType( "dome_hollow", function( param, data, threaded, physics )
     local dx = ( isvector( param.PrimSIZE ) and param.PrimSIZE[1] or 1 ) * 0.5
     local dy = ( isvector( param.PrimSIZE ) and param.PrimSIZE[2] or 1 ) * 0.5
     local dz = ( isvector( param.PrimSIZE ) and param.PrimSIZE[3] or 1 ) * 0.5
-    local dt = math_max( math_min( param.PrimDT or 1, dx - 1, dy - 1, dz - 1 ), 1 )
+    local dt = math_max( math_min( param.PrimDT or 1, dx - MinSize, dy - MinSize, dz - MinSize ), MinSize )
 
     local idx = dx - dt
     local idy = dy - dt
