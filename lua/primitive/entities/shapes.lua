@@ -15,8 +15,12 @@ do
             generic = {
                 PrimDT = 4,
                 PrimMAXSEG = 16,
+                PrimMAXSEGH = 8,
+                PrimMAXSEGV = 4,
                 PrimMESHSMOOTH = 0,
                 PrimNUMSEG = 16,
+                PrimNUMSEGH = 8,
+                PrimNUMSEGV = 4,
                 PrimSIDES = 0,
                 PrimSIZE = Vector( 48, 48, 48 ),
                 PrimSLANT = 0,
@@ -75,9 +79,12 @@ do
             },
             dome_hollow = {
                 PrimDT = 4,
+                PrimMAXSEGH = 8,
+                PrimMAXSEGV = 4,
                 PrimMESHSMOOTH = 65,
+                PrimNUMSEGH = 8,
+                PrimNUMSEGV = 4,
                 PrimSIZE = Vector( 48, 48, 48 ),
-                PrimSUBDIV = 8,
                 PrimTYPE = "dome_hollow",
             },
             parallelogram = {
@@ -185,6 +192,10 @@ do
         self:PrimitiveVar( "PrimSUBDIV", "Int", { category = "modify", title = "subdivide", panel = "int", min = 1, max = 32 }, true )
         self:PrimitiveVar( "PrimMAXSEG", "Int", { category = "modify", title = "max segments", panel = "int", min = 1, max = 32 }, true )
         self:PrimitiveVar( "PrimNUMSEG", "Int", { category = "modify", title = "num segments", panel = "int", min = 1, max = 32 }, true )
+        self:PrimitiveVar( "PrimNUMSEGH", "Int", { category = "modify", title = "num segments h", panel = "int", min = 1, max = 16 }, true )
+        self:PrimitiveVar( "PrimMAXSEGH", "Int", { category = "modify", title = "max segments h", panel = "int", min = 1, max = 16 }, true )
+        self:PrimitiveVar( "PrimNUMSEGV", "Int", { category = "modify", title = "num segments v", panel = "int", min = 1, max = 8 }, true )
+        self:PrimitiveVar( "PrimMAXSEGV", "Int", { category = "modify", title = "max segments v", panel = "int", min = 1, max = 8 }, true )
         self:PrimitiveVar( "PrimSIDES", "Int", { category = "modify", title = "sides", panel = "bitfield", lbl = { "front", "rear", "left", "right", "top", "bottom" } }, true )
     end
 
