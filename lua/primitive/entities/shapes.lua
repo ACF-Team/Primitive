@@ -75,7 +75,9 @@ do
             },
             dome_hollow = {
                 PrimDT = 4,
+                PrimMAXSEG = 16,
                 PrimMESHSMOOTH = 65,
+                PrimNUMSEG = 16,
                 PrimSIZE = Vector( 48, 48, 48 ),
                 PrimSUBDIV = 8,
                 PrimTYPE = "dome_hollow",
