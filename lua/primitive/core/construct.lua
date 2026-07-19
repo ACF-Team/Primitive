@@ -100,6 +100,69 @@ end
 
 
 -------------------------------
+-- Clips a convex point cloud, keeping the normal side. Every hull edge is an above/below pair,
+-- so intersecting all such pairs catches every crossing; extras land inside the hull and are
+-- dropped when the engine rebuilds it. Returns nil if nothing survives.
+local function clipConvex( points, planePos, planeNormal )
+    local above = {}
+    local kept = {}
+
+    -- Sort the cloud by side, keeping what the normal points toward
+    for i = 1, #points do
+        above[i] = vec_dot( planeNormal, points[i] - planePos ) >= -1e-6
+        if above[i] then kept[#kept + 1] = points[i] end
+    end
+
+    if #kept == 0 then return nil end          -- plane removed the convex
+    if #kept == #points then return points end -- plane missed it, hand back the original
+
+    -- Add where each above/below segment crosses the plane, forming the flat cut face
+    for i = 1, #points do
+        if above[i] then
+            for j = 1, #points do
+                if not above[j] then
+                    local xpoint = util_IntersectPlaneLineSegment( points[i], points[j], planePos, planeNormal )
+                    if xpoint then kept[#kept + 1] = xpoint end
+                end
+            end
+        end
+    end
+
+    return kept
+end
+
+-- Applies clip planes ( { pos, normal, seal } ) to a construct result, in place. A plane that
+-- would erase the geometry is skipped, so a primitive is never clipped out of existence.
+local function applyClips( result, clips, physics )
+    for _, clip in ipairs( clips ) do
+        local planePos = clip.pos
+        local planeNormal = clip.normal
+
+        if physics and istable( result.convexes ) then
+            -- Cut every collision hull, dropping the ones the plane wiped out
+            local clipped = {}
+            for i = 1, #result.convexes do
+                local convex = clipConvex( result.convexes[i], planePos, planeNormal )
+                if convex then clipped[#clipped + 1] = convex end
+            end
+
+            -- Only change if a convex got clipped
+            if clipped[1] then result.convexes = clipped end
+        end
+
+        if CLIENT and istable( result.verts ) and istable( result.index ) then
+            -- Cut the render mesh, capping the hole when the clip asks to be sealed
+            local above = result:Bisect( { pos = planePos, normal = planeNormal }, clip.seal, false )
+            if above then -- false when the plane misses the mesh, in either direction
+                result.verts = above.verts
+                result.index = above.index
+            end
+        end
+    end
+end
+
+
+-------------------------------
 addon.construct = { simpleton = {} }
 
 local registerType, getType
@@ -190,6 +253,11 @@ do
         -- Bad physics table, error model CODE 4
         if physics and ( not istable( result.convexes ) or #result.convexes < 1 ) then
             return true, errorModel( 4, name )
+        end
+
+        -- Cut with any caller-supplied clip planes before Build triangulates, so cut faces get UVs
+        if istable( param.clips ) and param.clips[1] then
+            applyClips( result, param.clips, physics )
         end
 
         if CLIENT then
