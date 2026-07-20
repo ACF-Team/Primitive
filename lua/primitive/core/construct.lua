@@ -1996,14 +1996,16 @@ end, { canThread = true, domePlane = { pos = Vector(), normal = Vector( 0, 0, 1 
 
 
 -- DOME_HOLLOW
--- Pushes interleaved outer+inner hemisphere verts into model over rings+1 latitude bands.
--- Each position v in ring r stores [outer, inner] consecutively; twoRing = 2*(sdiv+1) gives the same place on the next ring.
-local function pushHollowRings( model, rings, sdiv, dx, dy, dz, idx, idy, idz )
-    for r = 0, rings do
-        local t = math_pi * 0.5 * ( 1 - r / rings )
+-- Pushes interleaved outer+inner hemisphere verts into model over numseg2+1 latitude bands.
+-- Rings walk up from the equator, each covering 1/maxseg2 of the 90 degree quarter arc, so
+-- numseg2 < maxseg2 leaves the cap open. Longitudes work the same way against maxseg/numseg.
+-- Each position v in ring r stores [outer, inner] consecutively; twoRing = 2*(numseg+1) gives the same place on the next ring.
+local function pushHollowRings( model, maxseg2, numseg2, maxseg, numseg, dx, dy, dz, idx, idy, idz )
+    for r = 0, numseg2 do
+        local t = math_pi * 0.5 * ( 1 - r / maxseg2 )
         local sinT, cosT = math_sin( t ), math_cos( t )
-        for v = 0, sdiv do
-            local p = math_tau * v / sdiv
+        for v = 0, numseg do
+            local p = math_tau * v / maxseg
             model:PushXYZ( -dx  * math_cos( p ) * sinT, dy  * math_sin( p ) * sinT, dz  * cosT )  -- outer
             model:PushXYZ( -idx * math_cos( p ) * sinT, idy * math_sin( p ) * sinT, idz * cosT )  -- inner
         end
@@ -2011,8 +2013,26 @@ local function pushHollowRings( model, rings, sdiv, dx, dy, dz, idx, idy, idz )
 end
 
 registerType( "dome_hollow", function( param, data, threaded, physics )
-    local subdiv = 2 * math_round( ( param.PrimSUBDIV or 8 ) / 2 )
-    if subdiv < 4 then subdiv = 4 elseif subdiv > 32 then subdiv = 32 end
+    local maxseg  = param.PrimMAXSEGH or 1
+    local numseg  = param.PrimNUMSEGH or 1
+    local maxseg2 = param.PrimMAXSEGV or 1
+    local numseg2 = param.PrimNUMSEGV or 1
+
+    -- Legacy subdiv param will always come with these set to 1. Backwards compatibility measure.
+    -- Normally you wouldn't set these anyways (degenerate cases)
+    if maxseg == 1 and numseg == 1 and maxseg2 == 1 and numseg2 == 1 then
+        local subdiv = math_clamp( 2 * math_round( ( param.PrimSUBDIV or 8 ) / 2 ), 4, 32 )
+        maxseg, numseg = subdiv, subdiv
+        maxseg2, numseg2 = subdiv / 2, subdiv / 2
+    end
+
+    -- Horizontal (longitude) arc: numseg of maxseg segments around the full 360 degrees.
+    maxseg = math_clamp( maxseg, 1, 16 )
+    numseg = math_clamp( numseg, 1, maxseg )
+
+    -- Vertical (latitude) arc: numseg2 of maxseg2 segments over the 90 degrees from equator to apex.
+    maxseg2 = math_clamp( maxseg2, 1, 8 )
+    numseg2 = math_clamp( numseg2, 1, maxseg2 )
 
     local dx = ( isvector( param.PrimSIZE ) and param.PrimSIZE[1] or 1 ) * 0.5
     local dy = ( isvector( param.PrimSIZE ) and param.PrimSIZE[2] or 1 ) * 0.5
@@ -2023,19 +2043,18 @@ registerType( "dome_hollow", function( param, data, threaded, physics )
     local idy = dy - dt
     local idz = dz - dt
 
-    local numRings = subdiv / 2
-    local ringSize = subdiv + 1     -- verts per ring: subdiv segments need subdiv+1 verts to close the loop
+    local ringSize = numseg + 1     -- verts per ring: numseg segments need numseg+1 verts to span the arc
     local twoRing  = ringSize * 2   -- stride per ring in interleaved layout
 
     local model = simpleton.New()
 
     if CLIENT then
-        pushHollowRings( model, numRings, subdiv, dx, dy, dz, idx, idy, idz )
+        pushHollowRings( model, maxseg2, numseg2, maxseg, numseg, dx, dy, dz, idx, idy, idz )
 
         -- Emit quad strips between adjacent rings. Each ring occupies twoRing slots,
         -- so adding twoRing to an index moves to the same position one ring toward the apex.
-        for r = 1, numRings do
-            for v = 0, subdiv - 1 do
+        for r = 1, numseg2 do
+            for v = 0, numseg - 1 do
                 local a = 1 + ( r - 1 ) * twoRing + v * 2  -- bottom-left outer
                 local d = a + twoRing                       -- top-left outer
                 model:PushFace( d, d + 2, a + 2, a )           -- outer, outward normals
@@ -2044,30 +2063,53 @@ registerType( "dome_hollow", function( param, data, threaded, physics )
         end
 
         -- Close the open bottom edge with a ring of rim quads connecting outer equator to inner equator.
-        for v = 0, subdiv - 1 do
+        for v = 0, numseg - 1 do
             local ao = 1 + v * 2
             model:PushFace( ao, ao + 2, ao + 3, ao + 1 )  -- rim, downward normals
+        end
+
+        -- A partial vertical arc stops short of the apex, so close that ring too.
+        if numseg2 ~= maxseg2 then
+            local top = 1 + numseg2 * twoRing
+            for v = 0, numseg - 1 do
+                local ao = top + v * 2
+                model:PushFace( ao + 1, ao + 3, ao + 2, ao )  -- cap, upward normals
+            end
+        end
+
+        -- When the arc is partial, cap the two cut edges with wall quads spanning outer to inner.
+        if numseg ~= maxseg then
+            for r = 1, numseg2 do
+                local aStart = 1 + ( r - 1 ) * twoRing
+                local dStart = aStart + twoRing
+                model:PushFace( aStart, aStart + 1, dStart + 1, dStart )
+
+                local aEnd = aStart + numseg * 2
+                local dEnd = aEnd + twoRing
+                model:PushFace( aEnd, dEnd, dEnd + 1, aEnd + 1 )
+            end
         end
 
         util_Transform( model.verts, param.PrimMESHROT, param.PrimMESHPOS, threaded )
     end
 
     if physics then
-        -- Physics uses a lower subdivision cap to keep the convex count reasonable.
-        local physSubdiv  = math_min( subdiv, 8 )
-        local physRings   = physSubdiv / 2
-        local physRingSz  = physSubdiv + 1
-        local physTwoRing = physRingSz * 2
+        -- Limit physics to 8 * 4 = 32 convexes at most.
+        local physMaxseg  = math_min( maxseg, 8 )
+        local physNumseg  = math_max( math_round( numseg * physMaxseg / maxseg ), 1 )
+        local physMaxseg2 = math_min( maxseg2, 4 )
+        local physNumseg2 = math_max( math_round( numseg2 * physMaxseg2 / maxseg2 ), 1 )
+        local physTwoRing = ( physNumseg + 1 ) * 2
         local physModel   = simpleton.New()
         local physVerts   = physModel.verts
 
-        pushHollowRings( physModel, physRings, physSubdiv, dx, dy, dz, idx, idy, idz )
+        pushHollowRings( physModel, physMaxseg2, physNumseg2, physMaxseg, physNumseg, dx, dy, dz, idx, idy, idz )
 
         -- One convex per patch: four outer corners + four inner corners of each wall quad.
         -- This approximates the hollow shell as a set of thin wedge-shaped convex hulls.
         local convexes = {}
-        for r = 0, physRings - 1 do
-            for v = 0, physSubdiv - 1 do
+        for r = 0, physNumseg2 - 1 do
+            for v = 0, physNumseg - 1 do
                 local oa = 1 + r * physTwoRing + v * 2  -- bottom-left outer
                 local od = oa + physTwoRing             -- top-left outer
                 convexes[#convexes + 1] = {
