@@ -93,6 +93,52 @@ local function util_IntersectPlaneLineSegment( lineStart, lineFinish, planePos, 
     return false
 end
 
+-- Orthonormal basis of the plane, right x up == normal
+local function util_PlaneBasis( normal )
+    local right = vec_cross( math_abs( normal.z ) < 0.9 and Vector( 0, 0, 1 ) or Vector( 1, 0, 0 ), normal )
+    vec_normalize( right )
+
+    return right, vec_cross( normal, right )
+end
+
+-- Convex hull of 2D points ( { X, Y, Pos } ), counter-clockwise. Andrew's monotone chain.
+-- Both tables keep stale entries past their count, so pass and read the count, never #.
+local function util_ConvexHull2D( points, count )
+    table.sort( points, function( a, b )
+        if a.X ~= b.X then return a.X < b.X end
+        return a.Y < b.Y
+    end )
+
+    local function cross( o, a, b )
+        return ( a.X - o.X ) * ( b.Y - o.Y ) - ( a.Y - o.Y ) * ( b.X - o.X )
+    end
+
+    local hull, n = {}, 0
+
+    -- Appends a point, dropping any tail that makes a non-left turn. Floor keeps the upper hull from eating the lower one.
+    local function append( p, floor )
+        while n > floor and cross( hull[n - 1], hull[n], p ) <= 0 do
+            n = n - 1
+        end
+
+        n = n + 1
+        hull[n] = p
+    end
+
+    -- Lower hull, left to right
+    for i = 1, count do
+        append( points[i], 1 )
+    end
+
+    -- Upper hull, right to left. The rightmost point ends the lower hull, so start one short of it and keep it as the floor.
+    local floor = n
+    for i = count - 1, 1, -1 do
+        append( points[i], floor )
+    end
+
+    return hull, n - 1 -- The leftmost point closes the loop and repeats hull[1]
+end
+
 local function util_PointMirror( point, origin, normal )
     local l = vec_dot( normal, origin - point )
     return point + normal * l * 2
@@ -866,30 +912,37 @@ do
         end
     end
 
-    local function closeEdgeLoop( abovePlane, belowPlane, loopCenter, loopPoints )
-        local aA
-        if abovePlane then
-            aA = abovePlane:PushVertex( loopCenter )
-        end
+    -- Caps the hole a bisect opened up by fanning the cut points' convex hull. Sorting them by
+    -- angle about their centroid instead only orders a star-shaped face, so cuts came back as a sawtooth.
+    local function closeEdgeLoop( abovePlane, belowPlane, loopPoints, planeNormal )
+        -- The above cap faces away from the plane, and the hull winds counter-clockwise about it, front facing here
+        local capNormal = -planeNormal
+        local right, up = util_PlaneBasis( capNormal )
 
-        local bA
-        if belowPlane then
-            bA = belowPlane:PushVertex( loopCenter )
-        end
-
-        local wrap = { [#loopPoints] = 1 }
-
+        local projected = {}
         for i = 1, #loopPoints do
-            local p0 = loopPoints[i]
-            local p1 = loopPoints[wrap[i] or i + 1]
-
-            if aA then
-                abovePlane:PushTriangle( aA, abovePlane:PushVertex( p0 ), abovePlane:PushVertex( p1 ) )
-            end
-            if bA then
-                belowPlane:PushTriangle( bA, belowPlane:PushVertex( p1 ), belowPlane:PushVertex( p0 ) )
-            end
+            local p = loopPoints[i]
+            projected[i] = { X = vec_dot( right, p ), Y = vec_dot( up, p ), Pos = p }
         end
+
+        local hull, count = util_ConvexHull2D( projected, #loopPoints )
+        if count < 3 then return end
+
+        -- Each corner is pushed once and fanned by index, rather than re-pushed per triangle
+        local aFace = abovePlane and {}
+        local bFace = belowPlane and {}
+
+        for i = 1, count do
+            local p = hull[i].Pos
+
+            if aFace then aFace[i] = abovePlane:PushVertex( p ) end
+            -- Reversed, the below side's cap faces the other way
+            if bFace then bFace[count - i + 1] = belowPlane:PushVertex( p ) end
+        end
+
+        -- A convex polygon fans from any of its own vertices
+        if aFace then abovePlane:PushFaceTable( aFace ) end
+        if bFace then belowPlane:PushFaceTable( bFace ) end
     end
 
     --[[ Given an unordered list of line segments, return a closed boundary
@@ -965,26 +1018,21 @@ do
 
         -- Check each edge of each triangle for an intersection with the plane.
         -- All that intersect are split into two smaller triangles.
-        local loopCenter = Vector()
         local loopPoints = ( fillAbove or fillBelow ) and {} or nil
 
         for i = 1, #self.index, 3 do
             local l0, l1 = intersection( self, i, planePos, planeNormal, abovePlane, belowPlane )
 
+            -- Both ends, so a corner isn't missed when it only turns up as the far end of some triangle's cut
             if loopPoints and l0 and l1 then
-                vec_add( loopCenter, l0 )
                 loopPoints[#loopPoints + 1] = l0
+                loopPoints[#loopPoints + 1] = l1
             end
         end
 
-        if loopPoints then
-            loopCenter = loopCenter / #loopPoints
-
-            table.sort( loopPoints, function( sa, sb )
-                return vec_dot( planeNormal, vec_cross( sa - loopCenter, sb - loopCenter ) ) < 0
-            end )
-
-            closeEdgeLoop( fillAbove and abovePlane, fillBelow and belowPlane, loopCenter, loopPoints )
+        -- Fewer than three points can't bound a face
+        if loopPoints and loopPoints[3] then
+            closeEdgeLoop( fillAbove and abovePlane, fillBelow and belowPlane, loopPoints, planeNormal )
         end
 
         abovePlane.key = {}
