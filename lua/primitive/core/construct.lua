@@ -146,32 +146,63 @@ end
 
 
 -------------------------------
--- Clips a convex point cloud, keeping the normal side. Every hull edge is an above/below pair,
--- so intersecting all such pairs catches every crossing; extras land inside the hull and are
--- dropped when the engine rebuilds it. Returns nil if nothing survives.
+-- Clips a convex point cloud, keeping the normal side. Returns nil if nothing survives.
+--
+-- Every hull edge is an above/below pair, so intersecting all such pairs catches every crossing.
+-- Most pairs are chords whose crossings land inside the cut face, so the crossings are reduced to
+-- their 2d hull: the face's corners alone, which keeps the point count bounded across clips.
 local function clipConvex( points, planePos, planeNormal )
-    local above = {}
-    local kept = {}
+    local count = #points
+    local above, dist = {}, {}
+    local kept, nkept = {}, 0
 
     -- Sort the cloud by side, keeping what the normal points toward
-    for i = 1, #points do
-        above[i] = vec_dot( planeNormal, points[i] - planePos ) >= -1e-6
-        if above[i] then kept[#kept + 1] = points[i] end
+    for i = 1, count do
+        dist[i] = vec_dot( planeNormal, points[i] - planePos )
+        above[i] = dist[i] >= -1e-6
+
+        if above[i] then
+            nkept = nkept + 1
+            kept[nkept] = points[i]
+        end
     end
 
-    if #kept == 0 then return nil end          -- plane removed the convex
-    if #kept == #points then return points end -- plane missed it, hand back the original
+    if nkept == 0 then return nil end         -- plane removed the convex
+    if nkept == count then return points end  -- plane missed it, hand back the original
 
-    -- Add where each above/below segment crosses the plane, forming the flat cut face
-    for i = 1, #points do
+    -- From the signed distances, not a segment intersection, so a grazing edge can't be missed
+    local right, up = util_PlaneBasis( planeNormal )
+    local cuts, ncuts = {}, 0
+
+    for i = 1, count do
         if above[i] then
-            for j = 1, #points do
+            local a, da = points[i], dist[i]
+
+            for j = 1, count do
                 if not above[j] then
-                    local xpoint = util_IntersectPlaneLineSegment( points[i], points[j], planePos, planeNormal )
-                    if xpoint then kept[#kept + 1] = xpoint end
+                    -- da >= 0 > db, so the denominator is positive and frac lands in [0, 1]
+                    local frac = math_clamp( da / ( da - dist[j] ), 0, 1 )
+                    local p = a + ( points[j] - a ) * frac
+
+                    ncuts = ncuts + 1
+                    cuts[ncuts] = { X = vec_dot( right, p ), Y = vec_dot( up, p ), Pos = p }
                 end
             end
         end
+    end
+
+    -- Fewer than three crossings can't bound a face, so there's no hull to take
+    if ncuts < 3 then
+        for i = 1, ncuts do
+            kept[nkept + i] = cuts[i].Pos
+        end
+
+        return kept
+    end
+
+    local hull, nhull = util_ConvexHull2D( cuts, ncuts )
+    for i = 1, nhull do
+        kept[nkept + i] = hull[i].Pos
     end
 
     return kept
@@ -912,8 +943,7 @@ do
         end
     end
 
-    -- Caps the hole a bisect opened up by fanning the cut points' convex hull. Sorting them by
-    -- angle about their centroid instead only orders a star-shaped face, so cuts came back as a sawtooth.
+    -- Caps the hole a bisect opened up by fanning the cut points' convex hull
     local function closeEdgeLoop( abovePlane, belowPlane, loopPoints, planeNormal )
         -- The above cap faces away from the plane, and the hull winds counter-clockwise about it, front facing here
         local capNormal = -planeNormal
