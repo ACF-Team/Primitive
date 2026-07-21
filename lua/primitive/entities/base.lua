@@ -222,6 +222,10 @@ local function rescale( self, scalar )
 end
 
 function class:PrimitiveRebuildPhysics( result )
+    -- Rebuilding a parented primitive would cause issues with the hitbox. Unparent and reparent
+    local parent = SERVER and self:GetParent() or nil
+    if IsValid( parent ) then self:SetParent( nil ) end
+
     local props
     if SERVER then
         props = self:PrimitiveGetProperties()
@@ -281,6 +285,8 @@ function class:PrimitiveRebuildPhysics( result )
 
         self:PrimitiveSetProperties( props )
     end
+
+    if IsValid( parent ) then self:SetParent( parent ) end
 end
 
 
