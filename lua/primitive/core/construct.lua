@@ -93,52 +93,6 @@ local function util_IntersectPlaneLineSegment( lineStart, lineFinish, planePos, 
     return false
 end
 
--- Orthonormal basis of the plane, right x up == normal
-local function util_PlaneBasis( normal )
-    local right = vec_cross( math_abs( normal.z ) < 0.9 and Vector( 0, 0, 1 ) or Vector( 1, 0, 0 ), normal )
-    vec_normalize( right )
-
-    return right, vec_cross( normal, right )
-end
-
--- Convex hull of 2D points ( { X, Y, Pos } ), counter-clockwise. Andrew's monotone chain.
--- Both tables keep stale entries past their count, so pass and read the count, never #.
-local function util_ConvexHull2D( points, count )
-    table.sort( points, function( a, b )
-        if a.X ~= b.X then return a.X < b.X end
-        return a.Y < b.Y
-    end )
-
-    local function cross( o, a, b )
-        return ( a.X - o.X ) * ( b.Y - o.Y ) - ( a.Y - o.Y ) * ( b.X - o.X )
-    end
-
-    local hull, n = {}, 0
-
-    -- Appends a point, dropping any tail that makes a non-left turn. Floor keeps the upper hull from eating the lower one.
-    local function append( p, floor )
-        while n > floor and cross( hull[n - 1], hull[n], p ) <= 0 do
-            n = n - 1
-        end
-
-        n = n + 1
-        hull[n] = p
-    end
-
-    -- Lower hull, left to right
-    for i = 1, count do
-        append( points[i], 1 )
-    end
-
-    -- Upper hull, right to left. The rightmost point ends the lower hull, so start one short of it and keep it as the floor.
-    local floor = n
-    for i = count - 1, 1, -1 do
-        append( points[i], floor )
-    end
-
-    return hull, n - 1 -- The leftmost point closes the loop and repeats hull[1]
-end
-
 local function util_PointMirror( point, origin, normal )
     local l = vec_dot( normal, origin - point )
     return point + normal * l * 2
@@ -146,63 +100,32 @@ end
 
 
 -------------------------------
--- Clips a convex point cloud, keeping the normal side. Returns nil if nothing survives.
---
--- Every hull edge is an above/below pair, so intersecting all such pairs catches every crossing.
--- Most pairs are chords whose crossings land inside the cut face, so the crossings are reduced to
--- their 2d hull: the face's corners alone, which keeps the point count bounded across clips.
+-- Clips a convex point cloud, keeping the normal side. Every hull edge is an above/below pair,
+-- so intersecting all such pairs catches every crossing; extras land inside the hull and are
+-- dropped when the engine rebuilds it. Returns nil if nothing survives.
 local function clipConvex( points, planePos, planeNormal )
-    local count = #points
-    local above, dist = {}, {}
-    local kept, nkept = {}, 0
+    local above = {}
+    local kept = {}
 
     -- Sort the cloud by side, keeping what the normal points toward
-    for i = 1, count do
-        dist[i] = vec_dot( planeNormal, points[i] - planePos )
-        above[i] = dist[i] >= -1e-6
-
-        if above[i] then
-            nkept = nkept + 1
-            kept[nkept] = points[i]
-        end
+    for i = 1, #points do
+        above[i] = vec_dot( planeNormal, points[i] - planePos ) >= -1e-6
+        if above[i] then kept[#kept + 1] = points[i] end
     end
 
-    if nkept == 0 then return nil end         -- plane removed the convex
-    if nkept == count then return points end  -- plane missed it, hand back the original
+    if #kept == 0 then return nil end          -- plane removed the convex
+    if #kept == #points then return points end -- plane missed it, hand back the original
 
-    -- From the signed distances, not a segment intersection, so a grazing edge can't be missed
-    local right, up = util_PlaneBasis( planeNormal )
-    local cuts, ncuts = {}, 0
-
-    for i = 1, count do
+    -- Add where each above/below segment crosses the plane, forming the flat cut face
+    for i = 1, #points do
         if above[i] then
-            local a, da = points[i], dist[i]
-
-            for j = 1, count do
+            for j = 1, #points do
                 if not above[j] then
-                    -- da >= 0 > db, so the denominator is positive and frac lands in [0, 1]
-                    local frac = math_clamp( da / ( da - dist[j] ), 0, 1 )
-                    local p = a + ( points[j] - a ) * frac
-
-                    ncuts = ncuts + 1
-                    cuts[ncuts] = { X = vec_dot( right, p ), Y = vec_dot( up, p ), Pos = p }
+                    local xpoint = util_IntersectPlaneLineSegment( points[i], points[j], planePos, planeNormal )
+                    if xpoint then kept[#kept + 1] = xpoint end
                 end
             end
         end
-    end
-
-    -- Fewer than three crossings can't bound a face, so there's no hull to take
-    if ncuts < 3 then
-        for i = 1, ncuts do
-            kept[nkept + i] = cuts[i].Pos
-        end
-
-        return kept
-    end
-
-    local hull, nhull = util_ConvexHull2D( cuts, ncuts )
-    for i = 1, nhull do
-        kept[nkept + i] = hull[i].Pos
     end
 
     return kept
@@ -943,36 +866,30 @@ do
         end
     end
 
-    -- Caps the hole a bisect opened up by fanning the cut points' convex hull
-    local function closeEdgeLoop( abovePlane, belowPlane, loopPoints, planeNormal )
-        -- The above cap faces away from the plane, and the hull winds counter-clockwise about it, front facing here
-        local capNormal = -planeNormal
-        local right, up = util_PlaneBasis( capNormal )
+    local function closeEdgeLoop( abovePlane, belowPlane, loopCenter, loopPoints )
+        local aA
+        if abovePlane then
+            aA = abovePlane:PushVertex( loopCenter )
+        end
 
-        local projected = {}
+        local bA
+        if belowPlane then
+            bA = belowPlane:PushVertex( loopCenter )
+        end
+
+        local wrap = { [#loopPoints] = 1 }
+
         for i = 1, #loopPoints do
-            local p = loopPoints[i]
-            projected[i] = { X = vec_dot( right, p ), Y = vec_dot( up, p ), Pos = p }
+            local p0 = loopPoints[i]
+            local p1 = loopPoints[wrap[i] or i + 1]
+
+            if aA then
+                abovePlane:PushTriangle( aA, abovePlane:PushVertex( p0 ), abovePlane:PushVertex( p1 ) )
+            end
+            if bA then
+                belowPlane:PushTriangle( bA, belowPlane:PushVertex( p1 ), belowPlane:PushVertex( p0 ) )
+            end
         end
-
-        local hull, count = util_ConvexHull2D( projected, #loopPoints )
-        if count < 3 then return end
-
-        -- Each corner is pushed once and fanned by index, rather than re-pushed per triangle
-        local aFace = abovePlane and {}
-        local bFace = belowPlane and {}
-
-        for i = 1, count do
-            local p = hull[i].Pos
-
-            if aFace then aFace[i] = abovePlane:PushVertex( p ) end
-            -- Reversed, the below side's cap faces the other way
-            if bFace then bFace[count - i + 1] = belowPlane:PushVertex( p ) end
-        end
-
-        -- A convex polygon fans from any of its own vertices
-        if aFace then abovePlane:PushFaceTable( aFace ) end
-        if bFace then belowPlane:PushFaceTable( bFace ) end
     end
 
     --[[ Given an unordered list of line segments, return a closed boundary
@@ -1048,21 +965,26 @@ do
 
         -- Check each edge of each triangle for an intersection with the plane.
         -- All that intersect are split into two smaller triangles.
+        local loopCenter = Vector()
         local loopPoints = ( fillAbove or fillBelow ) and {} or nil
 
         for i = 1, #self.index, 3 do
             local l0, l1 = intersection( self, i, planePos, planeNormal, abovePlane, belowPlane )
 
-            -- Both ends, so a corner isn't missed when it only turns up as the far end of some triangle's cut
             if loopPoints and l0 and l1 then
+                vec_add( loopCenter, l0 )
                 loopPoints[#loopPoints + 1] = l0
-                loopPoints[#loopPoints + 1] = l1
             end
         end
 
-        -- Fewer than three points can't bound a face
-        if loopPoints and loopPoints[3] then
-            closeEdgeLoop( fillAbove and abovePlane, fillBelow and belowPlane, loopPoints, planeNormal )
+        if loopPoints then
+            loopCenter = loopCenter / #loopPoints
+
+            table.sort( loopPoints, function( sa, sb )
+                return vec_dot( planeNormal, vec_cross( sa - loopCenter, sb - loopCenter ) ) < 0
+            end )
+
+            closeEdgeLoop( fillAbove and abovePlane, fillBelow and belowPlane, loopCenter, loopPoints )
         end
 
         abovePlane.key = {}
