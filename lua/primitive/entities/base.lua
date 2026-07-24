@@ -54,12 +54,39 @@ function class:SetupDataTables()
     self:PrimitiveVar( "PrimMESHPOS", "Vector", { global = true, category = "model", title = "offset", panel = "vector", min = Vector( -500, -500, -500 ), max = Vector( 500, 500, 500 ) }, true )
     self:PrimitiveVar( "PrimMESHROT", "Angle", { global = true, category = "model", title = "rotate", panel = "angle" }, true )
 
+    -- Tell improved clipping we are responsible for maintaining the mesh and its clips.
+    self.ImprovedClippingExternalMesh = true
+
     self:PrimitiveSetupDataTables()
 end
 
 
 function class:PrimitiveGetConstructSimple( name )
     local keys = self:PrimitiveGetKeys()
+
+    -- Bake any improved clips in as entity-local planes.
+    if ImprovedClipping then
+        local clips = ImprovedClipping.GetClips( self )
+
+        if clips[1] then
+            local param = {}
+            for k, v in pairs( keys ) do param[k] = v end
+
+            local planes = {}
+            for i = 1, #clips do
+                local clip = clips[i]
+                planes[i] = {
+                    pos = clip.Normal * clip.Distance,
+                    normal = clip.Normal,
+                    seal = clip.Seal ~= false,
+                }
+            end
+            param.clips = planes
+
+            return Primitive.construct.get( name, param, CLIENT, param.PrimMESHPHYS )
+        end
+    end
+
     return Primitive.construct.get( name, keys, CLIENT, keys.PrimMESHPHYS )
 end
 
@@ -195,6 +222,10 @@ local function rescale( self, scalar )
 end
 
 function class:PrimitiveRebuildPhysics( result )
+    -- Rebuilding a parented primitive would cause issues with the hitbox. Unparent and reparent
+    local parent = SERVER and self:GetParent() or nil
+    if IsValid( parent ) then self:SetParent( nil ) end
+
     local props
     if SERVER then
         props = self:PrimitiveGetProperties()
@@ -254,6 +285,8 @@ function class:PrimitiveRebuildPhysics( result )
 
         self:PrimitiveSetProperties( props )
     end
+
+    if IsValid( parent ) then self:SetParent( parent ) end
 end
 
 
@@ -623,28 +656,13 @@ do
         end
     end)
 
-    -- Re-apply any proper_clipping physics clips after each primitive reconstruction.
-    -- Primitives reinitialize via PhysicsInitMultiConvex on every reconstruction, which wipes the clips
-    -- Bypass the race condition by preserving existing clips on rebuild
-    hook.Add("Primitive_PostRebuildPhysics", "Primitive_ProperClipping", function( ent )
-        if not ent.Clipped or not istable( ent.ClipData ) then return end -- no clips to reapply
-        if not ProperClipping or not isfunction( ProperClipping.ClipPhysics ) then return end -- proper_clipping not installed
-
-        -- Aggregate all physics clips
-        local norms, dists = {}, {}
-        local count = 0
-        for _, clip in ipairs( ent.ClipData ) do
-            if clip.physics then
-                count = count + 1
-                norms[count] = clip.norm
-                dists[count] = clip.dist
-            end
+    -- Rebuild on clip changes so the new planes get baked in ( see PrimitiveGetConstructSimple ).
+    -- The hook only exists when Improved Clipping is installed, so neither addon depends on the other.
+    hook.Add( "ImprovedClipping_ClipsChanged", "Primitive_ImprovedClipping", function( ent )
+        if ent.IsPrimitive and istable( ent.primitive ) then
+            ent:PrimitiveReconstruct()
         end
-
-        if count == 0 then return end -- no physics clips to reapply
-
-        ProperClipping.ClipPhysics( ent, norms, dists, true )
-    end)
+    end )
 end
 
 
