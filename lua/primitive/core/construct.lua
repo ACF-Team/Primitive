@@ -98,34 +98,116 @@ local function util_PointMirror( point, origin, normal )
     return point + normal * l * 2
 end
 
+-- Two unit axes spanning the plane the normal defines
+local function util_PlaneBasis( normal )
+    local right
+    if math_abs( normal.z ) < 0.9 then
+        right = vec_getnormalized( vec_cross( normal, Vector( 0, 0, 1 ) ) )
+    else
+        right = vec_getnormalized( vec_cross( normal, Vector( 1, 0, 0 ) ) )
+    end
+
+    return right, vec_cross( normal, right )
+end
+
+-- Andrew's monotone chain over { X, Y, ... } points, keeping collinear points; returns the hull and its size
+local function util_ConvexHull2D( points, count )
+    table.sort( points, function( a, b )
+        if a.X ~= b.X then return a.X < b.X end
+        return a.Y < b.Y
+    end )
+
+    local hull, n = {}, 0
+
+    for i = 1, count do
+        local p = points[i]
+        while n >= 2 and ( hull[n].X - hull[n - 1].X ) * ( p.Y - hull[n - 1].Y ) - ( hull[n].Y - hull[n - 1].Y ) * ( p.X - hull[n - 1].X ) < 0 do
+            hull[n] = nil
+            n = n - 1
+        end
+        n = n + 1
+        hull[n] = p
+    end
+
+    local lower = n + 1
+    for i = count - 1, 1, -1 do
+        local p = points[i]
+        while n >= lower and ( hull[n].X - hull[n - 1].X ) * ( p.Y - hull[n - 1].Y ) - ( hull[n].Y - hull[n - 1].Y ) * ( p.X - hull[n - 1].X ) < 0 do
+            hull[n] = nil
+            n = n - 1
+        end
+        n = n + 1
+        hull[n] = p
+    end
+
+    hull[n] = nil -- last point repeats the first
+
+    return hull, n - 1
+end
+
 
 -------------------------------
--- Clips a convex point cloud, keeping the normal side. Every hull edge is an above/below pair,
--- so intersecting all such pairs catches every crossing; extras land inside the hull and are
--- dropped when the engine rebuilds it. Returns nil if nothing survives.
+-- Clips a convex point cloud, keeping the normal side; returns nil if nothing survives.
+-- Crossing every above/below pair catches every cut edge, then the 2d hull drops the interior
+-- chord crossings so the point count stays bounded across clips.
 local function clipConvex( points, planePos, planeNormal )
-    local above = {}
+    local count = #points
+    local above, dist = {}, {}
     local kept = {}
 
     -- Sort the cloud by side, keeping what the normal points toward
-    for i = 1, #points do
-        above[i] = vec_dot( planeNormal, points[i] - planePos ) >= -1e-6
+    for i = 1, count do
+        dist[i] = vec_dot( planeNormal, points[i] - planePos )
+        above[i] = dist[i] >= -1e-6
         if above[i] then kept[#kept + 1] = points[i] end
     end
 
-    if #kept == 0 then return nil end          -- plane removed the convex
-    if #kept == #points then return points end -- plane missed it, hand back the original
+    if #kept == 0 then return nil end         -- plane removed the convex
+    if #kept == count then return points end  -- plane missed it, hand back the original
 
-    -- Add where each above/below segment crosses the plane, forming the flat cut face
-    for i = 1, #points do
+    -- Cross the plane in the plane's 2d frame, as scalars: pairs number in the tens of
+    -- thousands on a dense cloud, so Vectors are only built for the crossings the hull keeps
+    local right, up = util_PlaneBasis( planeNormal )
+    local rx, uy = {}, {}
+
+    for i = 1, count do
+        rx[i] = vec_dot( right, points[i] )
+        uy[i] = vec_dot( up, points[i] )
+    end
+
+    local cuts = {}
+
+    for i = 1, count do
         if above[i] then
-            for j = 1, #points do
+            local da, xa, ya = dist[i], rx[i], uy[i]
+
+            for j = 1, count do
                 if not above[j] then
-                    local xpoint = util_IntersectPlaneLineSegment( points[i], points[j], planePos, planeNormal )
-                    if xpoint then kept[#kept + 1] = xpoint end
+                    -- da >= 0 > db, so the denominator is positive and frac lands in [0, 1]
+                    local frac = math_clamp( da / ( da - dist[j] ), 0, 1 )
+
+                    cuts[#cuts + 1] = {
+                        X = xa + ( rx[j] - xa ) * frac,
+                        Y = ya + ( uy[j] - ya ) * frac,
+                        I = i, J = j, F = frac,
+                    }
                 end
             end
         end
+    end
+
+    local hull, nhull
+    if #cuts < 3 then
+        -- Fewer than three crossings can't bound a face, so there's no hull to take
+        hull, nhull = cuts, #cuts
+    else
+        hull, nhull = util_ConvexHull2D( cuts, #cuts )
+    end
+
+    for i = 1, nhull do
+        local cut = hull[i]
+        local a = points[cut.I]
+        kept[#kept + 1] = a + ( points[cut.J] - a ) * cut.F
     end
 
     return kept
