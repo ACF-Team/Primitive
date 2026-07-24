@@ -138,6 +138,10 @@ local function applyClips( result, clips, physics )
         local planePos = clip.pos
         local planeNormal = clip.normal
 
+        -- Clipping a multi convex will always result in a concave hole in the physics mesh.
+        -- We shouldn't introduce a visual filling where there is a physical hole.
+        local seal = clip.seal and ( not istable( result.convexes ) or #result.convexes <= 1 )
+
         if physics and istable( result.convexes ) then
             -- Cut every collision hull, dropping the ones the plane wiped out
             local clipped = {}
@@ -152,7 +156,7 @@ local function applyClips( result, clips, physics )
 
         if CLIENT and istable( result.verts ) and istable( result.index ) then
             -- Cut the render mesh, capping the hole when the clip asks to be sealed
-            local above = result:Bisect( { pos = planePos, normal = planeNormal }, clip.seal, false )
+            local above = result:Bisect( { pos = planePos, normal = planeNormal }, seal, false )
             if above then -- false when the plane misses the mesh, in either direction
                 result.verts = above.verts
                 result.index = above.index
