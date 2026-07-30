@@ -110,18 +110,19 @@ local function util_PlaneBasis( normal )
     return right, vec_cross( normal, right )
 end
 
--- Andrew's monotone chain over { X, Y, ... } points, keeping collinear points; returns the hull and its size
-local function util_ConvexHull2D( points, count )
-    table.sort( points, function( a, b )
-        if a.X ~= b.X then return a.X < b.X end
-        return a.Y < b.Y
+-- Andrew's monotone chain over parallel coordinate arrays, returning point indices; collinear and
+-- duplicate points are popped so the kept set stays minimal across clips. `order` must hold 1..count.
+local function util_ConvexHull2D( px, py, count, order )
+    table.sort( order, function( a, b )
+        if px[a] ~= px[b] then return px[a] < px[b] end
+        return py[a] < py[b]
     end )
 
     local hull, n = {}, 0
 
     for i = 1, count do
-        local p = points[i]
-        while n >= 2 and ( hull[n].X - hull[n - 1].X ) * ( p.Y - hull[n - 1].Y ) - ( hull[n].Y - hull[n - 1].Y ) * ( p.X - hull[n - 1].X ) < 0 do
+        local p = order[i]
+        while n >= 2 and ( px[hull[n]] - px[hull[n - 1]] ) * ( py[p] - py[hull[n - 1]] ) - ( py[hull[n]] - py[hull[n - 1]] ) * ( px[p] - px[hull[n - 1]] ) <= 0 do
             hull[n] = nil
             n = n - 1
         end
@@ -131,8 +132,8 @@ local function util_ConvexHull2D( points, count )
 
     local lower = n + 1
     for i = count - 1, 1, -1 do
-        local p = points[i]
-        while n >= lower and ( hull[n].X - hull[n - 1].X ) * ( p.Y - hull[n - 1].Y ) - ( hull[n].Y - hull[n - 1].Y ) * ( p.X - hull[n - 1].X ) < 0 do
+        local p = order[i]
+        while n >= lower and ( px[hull[n]] - px[hull[n - 1]] ) * ( py[p] - py[hull[n - 1]] ) - ( py[hull[n]] - py[hull[n - 1]] ) * ( px[p] - px[hull[n - 1]] ) <= 0 do
             hull[n] = nil
             n = n - 1
         end
@@ -165,49 +166,59 @@ local function clipConvex( points, planePos, planeNormal )
     if #kept == 0 then return nil end         -- plane removed the convex
     if #kept == count then return points end  -- plane missed it, hand back the original
 
-    -- Cross the plane in the plane's 2d frame, as scalars: pairs number in the tens of
-    -- thousands on a dense cloud, so Vectors are only built for the crossings the hull keeps
+    -- Cross the plane in the plane's 2d frame, as scalars in parallel arrays: pairs number in
+    -- the tens of thousands on a dense cloud, so no tables are made per crossing and Vectors
+    -- are only built for the crossings the hull keeps
     local right, up = util_PlaneBasis( planeNormal )
     local rx, uy = {}, {}
+    local below, nbelow = {}, 0
 
     for i = 1, count do
         rx[i] = vec_dot( right, points[i] )
         uy[i] = vec_dot( up, points[i] )
+
+        if not above[i] then
+            nbelow = nbelow + 1
+            below[nbelow] = i
+        end
     end
 
-    local cuts = {}
+    local cutX, cutY, cutI, cutJ, cutF, order = {}, {}, {}, {}, {}, {}
+    local ncuts = 0
 
     for i = 1, count do
         if above[i] then
             local da, xa, ya = dist[i], rx[i], uy[i]
 
-            for j = 1, count do
-                if not above[j] then
-                    -- da >= 0 > db, so the denominator is positive and frac lands in [0, 1]
-                    local frac = math_clamp( da / ( da - dist[j] ), 0, 1 )
+            for k = 1, nbelow do
+                local j = below[k]
 
-                    cuts[#cuts + 1] = {
-                        X = xa + ( rx[j] - xa ) * frac,
-                        Y = ya + ( uy[j] - ya ) * frac,
-                        I = i, J = j, F = frac,
-                    }
-                end
+                -- da >= 0 > db, so the denominator is positive and frac lands in [0, 1]
+                local frac = math_clamp( da / ( da - dist[j] ), 0, 1 )
+
+                ncuts = ncuts + 1
+                cutX[ncuts] = xa + ( rx[j] - xa ) * frac
+                cutY[ncuts] = ya + ( uy[j] - ya ) * frac
+                cutI[ncuts] = i
+                cutJ[ncuts] = j
+                cutF[ncuts] = frac
+                order[ncuts] = ncuts
             end
         end
     end
 
     local hull, nhull
-    if #cuts < 3 then
+    if ncuts < 3 then
         -- Fewer than three crossings can't bound a face, so there's no hull to take
-        hull, nhull = cuts, #cuts
+        hull, nhull = order, ncuts
     else
-        hull, nhull = util_ConvexHull2D( cuts, #cuts )
+        hull, nhull = util_ConvexHull2D( cutX, cutY, ncuts, order )
     end
 
     for i = 1, nhull do
         local cut = hull[i]
-        local a = points[cut.I]
-        kept[#kept + 1] = a + ( points[cut.J] - a ) * cut.F
+        local a = points[cutI[cut]]
+        kept[#kept + 1] = a + ( points[cutJ[cut]] - a ) * cutF[cut]
     end
 
     return kept
