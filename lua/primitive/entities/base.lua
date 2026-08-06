@@ -405,6 +405,11 @@ function class:Initialize()
         self:PhysicsInit( SOLID_VPHYSICS )
         self:SetMoveType( MOVETYPE_VPHYSICS )
         self:SetSolid( SOLID_VPHYSICS )
+
+        local physobj = self:GetPhysicsObject()
+        if physobj and physobj:IsValid() then
+            physobj:EnableMotion( false )
+        end
     end
 end
 
