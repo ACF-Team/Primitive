@@ -251,6 +251,24 @@ do
 
                 editor:InvalidateChildren( true )
             end,
+
+            PrimUNITS = function( self, editor, name, val )
+                local old = self:GetPrimUNITS()
+                if old == val then return end
+
+                local factor
+                if old == "source" and val == "centimeters" then
+                    factor = 2.54
+                elseif old == "centimeters" and val == "source" then
+                    factor = 1 / 2.54
+                else
+                    return
+                end
+
+                self:EditValue( "PrimSIZE", tostring( self:GetPrimSIZE() * factor ) )
+                self:EditValue( "PrimDT", tostring( self:GetPrimDT() * factor ) )
+                self:EditValue( "PrimSLANT", tostring( self:GetPrimSLANT() * factor ) )
+            end,
         }
 
         function class:EditorCallback( editor, name, val )
