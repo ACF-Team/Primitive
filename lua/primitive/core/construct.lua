@@ -98,158 +98,20 @@ local function util_PointMirror( point, origin, normal )
     return point + normal * l * 2
 end
 
--- Two unit axes spanning the plane the normal defines
-local function util_PlaneBasis( normal )
-    local right
-    if math_abs( normal.z ) < 0.9 then
-        right = vec_getnormalized( vec_cross( normal, Vector( 0, 0, 1 ) ) )
-    else
-        right = vec_getnormalized( vec_cross( normal, Vector( 1, 0, 0 ) ) )
-    end
-
-    return right, vec_cross( normal, right )
-end
-
--- Andrew's monotone chain over parallel coordinate arrays, returning point indices; collinear and
--- duplicate points are popped so the kept set stays minimal across clips. `order` must hold 1..count.
-local function util_ConvexHull2D( px, py, count, order )
-    table.sort( order, function( a, b )
-        if px[a] ~= px[b] then return px[a] < px[b] end
-        return py[a] < py[b]
-    end )
-
-    local hull, n = {}, 0
-
-    for i = 1, count do
-        local p = order[i]
-        while n >= 2 and ( px[hull[n]] - px[hull[n - 1]] ) * ( py[p] - py[hull[n - 1]] ) - ( py[hull[n]] - py[hull[n - 1]] ) * ( px[p] - px[hull[n - 1]] ) <= 0 do
-            hull[n] = nil
-            n = n - 1
-        end
-        n = n + 1
-        hull[n] = p
-    end
-
-    local lower = n + 1
-    for i = count - 1, 1, -1 do
-        local p = order[i]
-        while n >= lower and ( px[hull[n]] - px[hull[n - 1]] ) * ( py[p] - py[hull[n - 1]] ) - ( py[hull[n]] - py[hull[n - 1]] ) * ( px[p] - px[hull[n - 1]] ) <= 0 do
-            hull[n] = nil
-            n = n - 1
-        end
-        n = n + 1
-        hull[n] = p
-    end
-
-    hull[n] = nil -- last point repeats the first
-
-    return hull, n - 1
-end
-
-
 -------------------------------
--- Clips a convex point cloud, keeping the normal side; returns nil if nothing survives.
--- Crossing every above/below pair catches every cut edge, then the 2d hull drops the interior
--- chord crossings so the point count stays bounded across clips.
-local function clipConvex( points, planePos, planeNormal )
-    local count = #points
-    local above, dist = {}, {}
-    local kept = {}
-
-    -- Sort the cloud by side, keeping what the normal points toward
-    for i = 1, count do
-        dist[i] = vec_dot( planeNormal, points[i] - planePos )
-        above[i] = dist[i] >= -1e-6
-        if above[i] then kept[#kept + 1] = points[i] end
-    end
-
-    if #kept == 0 then return nil end         -- plane removed the convex
-    if #kept == count then return points end  -- plane missed it, hand back the original
-
-    -- Cross the plane in the plane's 2d frame, as scalars in parallel arrays: pairs number in
-    -- the tens of thousands on a dense cloud, so no tables are made per crossing and Vectors
-    -- are only built for the crossings the hull keeps
-    local right, up = util_PlaneBasis( planeNormal )
-    local rx, uy = {}, {}
-    local below, nbelow = {}, 0
-
-    for i = 1, count do
-        rx[i] = vec_dot( right, points[i] )
-        uy[i] = vec_dot( up, points[i] )
-
-        if not above[i] then
-            nbelow = nbelow + 1
-            below[nbelow] = i
-        end
-    end
-
-    local cutX, cutY, cutI, cutJ, cutF, order = {}, {}, {}, {}, {}, {}
-    local ncuts = 0
-
-    for i = 1, count do
-        if above[i] then
-            local da, xa, ya = dist[i], rx[i], uy[i]
-
-            for k = 1, nbelow do
-                local j = below[k]
-
-                -- da >= 0 > db, so the denominator is positive and frac lands in [0, 1]
-                local frac = math_clamp( da / ( da - dist[j] ), 0, 1 )
-
-                ncuts = ncuts + 1
-                cutX[ncuts] = xa + ( rx[j] - xa ) * frac
-                cutY[ncuts] = ya + ( uy[j] - ya ) * frac
-                cutI[ncuts] = i
-                cutJ[ncuts] = j
-                cutF[ncuts] = frac
-                order[ncuts] = ncuts
-            end
-        end
-    end
-
-    local hull, nhull
-    if ncuts < 3 then
-        -- Fewer than three crossings can't bound a face, so there's no hull to take
-        hull, nhull = order, ncuts
-    else
-        hull, nhull = util_ConvexHull2D( cutX, cutY, ncuts, order )
-    end
-
-    for i = 1, nhull do
-        local cut = hull[i]
-        local a = points[cutI[cut]]
-        kept[#kept + 1] = a + ( points[cutJ[cut]] - a ) * cutF[cut]
-    end
-
-    return kept
-end
-
--- Applies clip planes ( { pos, normal, seal } ) to a construct result, in place. A plane that
--- would erase the geometry is skipped, so a primitive is never clipped out of existence.
+-- Applies clip planes ( { pos, normal, seal } ) to a construct result, in place. Physics convex
+-- clipping is deferred until the entity has a real physics mesh to clip ( see
+-- clipMeshByPlanes / PrimitiveRebuildPhysics in entities/base.lua ) -- the planes are just
+-- stashed here so both the physics and visual passes cut along the exact same planes.
 local function applyClips( result, clips, physics )
-    for _, clip in ipairs( clips ) do
-        local planePos = clip.pos
-        local planeNormal = clip.normal
+    if physics and istable( result.convexes ) then
+        result.clipPlanes = clips
+    end
 
-        -- Clipping a multi convex will always result in a concave hole in the physics mesh.
-        -- We shouldn't introduce a visual filling where there is a physical hole.
-        local seal = clip.seal and ( not istable( result.convexes ) or #result.convexes <= 1 )
-
-        if physics and istable( result.convexes ) then
-            -- Cut every collision hull, dropping the ones the plane wiped out
-            local clipped = {}
-            for i = 1, #result.convexes do
-                local convex = clipConvex( result.convexes[i], planePos, planeNormal )
-                if convex then clipped[#clipped + 1] = convex end
-            end
-
-            -- Only change if a convex got clipped
-            if clipped[1] then result.convexes = clipped end
-        end
-
-        if CLIENT and istable( result.verts ) and istable( result.index ) then
+    if CLIENT and istable( result.verts ) and istable( result.index ) then
+        for _, clip in ipairs( clips ) do
             -- Cut the render mesh, capping the hole when the clip asks to be sealed
-            local above = result:Bisect( { pos = planePos, normal = planeNormal }, seal, false )
+            local above = result:Bisect( { pos = clip.pos, normal = clip.normal }, clip.seal, false )
             if above then -- false when the plane misses the mesh, in either direction
                 result.verts = above.verts
                 result.index = above.index
@@ -1368,6 +1230,51 @@ do
             end
         end
     end
+end
+
+
+--[[
+    @FUNCTION: addon.construct.clipMeshByPlanes
+
+    @DESCRIPTION:
+        Clips a triangle soup ( verts in groups of 3, as returned per-convex by
+        PhysObj:GetMeshConvexes ) against a sequence of clip planes, keeping the normal side of
+        each. Reuses simpleton:Bisect -- the same bisection the render mesh is cut with -- so a
+        primitive's physics and visuals always agree on exactly where a cut lands.
+
+    @PARAMETERS:
+        [table] verts -- flat array of Vectors, 3 per triangle
+        [table] clips -- array of { pos, normal, seal }
+
+    @RETURN:
+        [table] the clipped verts, or nil if a clip plane erased the mesh entirely
+--]]
+function addon.construct.clipMeshByPlanes( verts, clips )
+    local mesh = simpleton.New()
+    mesh.verts = verts
+    for i = 1, #verts do mesh.index[i] = i end
+
+    for i = 1, #clips do
+        local clip = clips[i]
+        local planePos, planeNormal = clip.pos, clip.normal
+
+        -- Cheap side test first: Bisect can't tell "entirely above" ( nothing to do ) apart
+        -- from "entirely below" ( the whole thing got cut away ), since both return false.
+        local anyAbove, anyBelow = false, false
+        for j = 1, #mesh.verts do
+            if vec_dot( planeNormal, mesh.verts[j] - planePos ) >= -1e-6 then anyAbove = true else anyBelow = true end
+            if anyAbove and anyBelow then break end
+        end
+
+        if not anyAbove then return nil end -- plane erased the mesh entirely
+
+        if anyBelow then
+            local above = mesh:Bisect( { pos = planePos, normal = planeNormal }, clip.seal, false )
+            if above then mesh = above end
+        end
+    end
+
+    return mesh.verts
 end
 
 

@@ -236,7 +236,37 @@ function class:PrimitiveRebuildPhysics( result )
 
     local cphysics
     if istable( result.convexes ) and istable( result.convexes[1] ) then
-        cphysics = self:PhysicsInitMultiConvex( result.convexes )
+        local convexes = result.convexes
+
+        if istable( result.clipPlanes ) and result.clipPlanes[1] then
+            -- Build once, unclipped, purely to read back the physics engine's own triangle mesh
+            -- for each convex -- clipping that ( instead of our raw point cloud ) means physics
+            -- gets cut with the exact same bisection the render mesh is cut with.
+            local probe = self:PhysicsInitMultiConvex( convexes )
+
+            if probe then
+                local physobj = self:GetPhysicsObject()
+
+                if IsValid( physobj ) then
+                    local meshconvexes = physobj:GetMeshConvexes()
+                    local clipped = {}
+
+                    for i = 1, #meshconvexes do
+                        local mc = meshconvexes[i]
+                        local verts = {}
+                        for j = 1, #mc do verts[j] = mc[j].pos end
+
+                        local kept = Primitive.construct.clipMeshByPlanes( verts, result.clipPlanes )
+                        if kept then clipped[#clipped + 1] = kept end
+                    end
+
+                    -- Only change if at least one convex survived; never clip a primitive out of existence
+                    if clipped[1] then convexes = clipped end
+                end
+            end
+        end
+
+        cphysics = self:PhysicsInitMultiConvex( convexes )
 
         if not cphysics then
             Primitive.funcs.log( self, "invalid convexes" )
