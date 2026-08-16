@@ -224,6 +224,17 @@ function class:PrimitiveRebuildPhysics( result )
 
         if not cphysics then
             Primitive.funcs.log( self, "invalid convexes" )
+        elseif CLIENT then
+            -- Clientside vphysics doesn't reliably pick up a rebuilt collision shape on its own
+            -- (see the Think() workaround above for the related bug). This works empirically. Trust me bro.
+            local physobj = self:GetPhysicsObject()
+
+            if physobj:IsValid() then
+                physobj:EnableMotion( false )
+                physobj:SetPos( self:GetPos() )
+                physobj:SetAngles( self:GetAngles() )
+                physobj:Wake()
+            end
         end
     end
 
