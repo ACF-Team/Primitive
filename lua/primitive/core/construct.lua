@@ -174,7 +174,7 @@ do
         return result
     end
 
-    local function getResult( construct, name, param, threaded, physics )
+    local function getResult( construct, name, param, threaded, physics, clips )
         local success, result = pcall( construct.factory, param, construct.data, threaded, physics )
 
         -- lua error, error model CODE 2
@@ -185,6 +185,46 @@ do
         -- Bad return, error model CODE 3
         if not istable( result ) then
             return true, errorModel( 3, name )
+        end
+
+        -- ImprovedClipping delegation: bisect against every stored clip, capping per Seal.
+        if clips and clips[1] and result.ApplyClips then
+            local preConvexes = result.convexes
+            local preConvexSimpletons = result.convexSimpletons
+            local preVerts = result.verts
+
+            -- Force the unitary render mesh's cut open when multi-convex, since its cross-section is concave and the cap fan only works on a convex loop.
+            local multiConvex = istable( preConvexSimpletons ) or ( istable( preConvexes ) and #preConvexes > 1 )
+
+            local clipped = result:ApplyClips( clips, multiConvex )
+
+            if clipped then
+                result = clipped
+
+                if istable( preConvexSimpletons ) then
+                    -- Multi-convex shapes: clip each piece's own triangulated simpleton individually.
+                    local newConvexes = {}
+
+                    for i = 1, #preConvexSimpletons do
+                        local clippedSub = preConvexSimpletons[i]:ApplyClips( clips )
+                        if clippedSub then
+                            newConvexes[#newConvexes + 1] = clippedSub.verts
+                        end
+                    end
+
+                    result.convexes = newConvexes
+                elseif istable( preConvexes ) and preConvexes[1] == preVerts then
+                    -- Single-convex shapes whose convex hull literally is their vertex table can be re-derived directly.
+                    result.convexes = { result.verts }
+                else
+                    -- Anything else keeps its original, unclipped convex hulls for now.
+                    result.convexes = preConvexes
+                end
+            else
+                result.verts = {}
+                result.index = {}
+                result.convexes = {}
+            end
         end
 
         -- Bad physics table, error model CODE 4
@@ -228,11 +268,12 @@ do
             [table] param      -- passed to the builder function
             [boolean] threaded -- return a coroutine (if possible)
             [boolean] physics  -- generate a collison model
+            [table] clips      -- ImprovedClipping clips to bisect the result against, optional
 
         @RETURN:
             either a function or a coroutine that will build the mesh
     --]]
-    function addon.construct.generate( construct, param, threaded, physics )
+    function addon.construct.generate( construct, param, threaded, physics, clips )
         if SERVER then threaded = nil end
 
         -- Non-existant construct, error model CODE 1
@@ -246,12 +287,12 @@ do
         -- Expected yield: true, true, table
         if threaded and construct.data.canThread then
             return true, coroutine.create( function()
-                coroutine_yield( getResult( construct, name, param, true, physics ) )
+                coroutine_yield( getResult( construct, name, param, true, physics, clips ) )
             end )
         end
 
         -- Expected return: true, table
-        return getResult( construct, name, param, false, physics )
+        return getResult( construct, name, param, false, physics, clips )
     end
 
 
@@ -265,11 +306,12 @@ do
             [table] param      -- passed to the builder function
             [boolean] threaded -- return a coroutine (if possible)
             [boolean] physics  -- generate a collison model
+            [table] clips      -- ImprovedClipping clips to bisect the result against, optional
 
         @RETURN:
             either a function or a coroutine that will build the mesh
     --]]
-    function addon.construct.get( name, param, threaded, physics )
+    function addon.construct.get( name, param, threaded, physics, clips )
         if param and param.PrimUNITS == "centimeters" then
             param = table.Copy( param )
             if isvector( param.PrimSIZE ) then
@@ -279,7 +321,7 @@ do
             if isnumber( param.PrimDT ) then param.PrimDT = math_max( param.PrimDT * 0.3937, MinSize ) end
             if isnumber( param.PrimSLANT ) then param.PrimSLANT = param.PrimSLANT * 0.3937 end
         end
-        return addon.construct.generate( construct_types[name], param, threaded, physics )
+        return addon.construct.generate( construct_types[name], param, threaded, physics, clips )
     end
 end
 
@@ -305,6 +347,72 @@ do
     --]]
     function simpleton.New()
         return setmetatable( { verts = {}, index = {}, key = {} }, meta )
+    end
+
+
+    --[[
+        @FUNCTION: simpleton:PushConvex
+
+        @DESCRIPTION: Register one physics convex piece: build a standalone sub-simpleton from a vertex list and a
+                      set of local-index face tuples, then append it to self.convexes/self.convexSimpletons (lazily
+                      created on first call). The counterpart to PushFace/PushTriangle for physics hulls -- those
+                      build self's own render index in place, this builds and registers a separate bisectable
+                      convex piece so ImprovedClipping can cut each one individually.
+
+        @PARAMETERS:
+            [table] verts -- vertex table, shared by reference (not copied)
+            [table] faces -- list of local-index tuples, e.g. { {1,2,3,4}, {5,6,7,8}, ... }
+
+        @RETURN:
+            [table] the pushed sub-simpleton
+    --]]
+    function meta:PushConvex( verts, faces )
+        if not self.convexes then
+            self.convexes = {}
+            self.convexSimpletons = {}
+        end
+
+        local sub = simpleton.New()
+        sub.verts = verts
+
+        for i = 1, #faces do
+            sub:PushFaceTable( faces[i] )
+        end
+
+        self.convexSimpletons[#self.convexSimpletons + 1] = sub
+        self.convexes[#self.convexes + 1] = sub.verts
+
+        return sub
+    end
+
+
+    --[[
+        @FUNCTION: simpleton:PushBoxConvex
+
+        @DESCRIPTION: PushConvex for a hexahedron described as two parallel 4-point loops (e.g. a top ring and a
+                      bottom ring), where top[i] and bottom[i] are the same corner on opposite loops. Generalizes
+                      the "8 verts, 6 quad faces" prism pattern shared by cube-like multi-convex shapes.
+
+        @PARAMETERS:
+            [table] verts  -- vertex table, shared by reference (not copied)
+            [table] top    -- 4 local indices into verts, one loop
+            [table] bottom -- 4 local indices into verts, the corresponding opposite loop
+
+        @RETURN:
+            [table] the pushed sub-simpleton
+    --]]
+    function meta:PushBoxConvex( verts, top, bottom )
+        local faces = {
+            top,
+            { bottom[4], bottom[3], bottom[2], bottom[1] },
+        }
+
+        for i = 1, 4 do
+            local j = i % 4 + 1
+            faces[#faces + 1] = { top[i], top[j], bottom[j], bottom[i] }
+        end
+
+        return self:PushConvex( verts, faces )
     end
 
 
@@ -388,11 +496,13 @@ do
             [boolean] pushindex
             [table] additional table to add vertices to (optional)
             [number] subtable id of ^, increments if not given (optional)
+            [table] if given, and vtable auto-nested a fresh subtable this call, appends a bisectable
+                    simpleton for that subtable's convex piece (sharing the prefab's own index) (optional)
 
         @RETURN:
             [table] key table of added vertices
     --]]
-    function meta:PushPrefab( name, pos, ang, scale, pushindex, vtable, vtableN )
+    function meta:PushPrefab( name, pos, ang, scale, pushindex, vtable, vtableN, convexSimpletons )
         local prefab = prefab_types[name]
         if not prefab then
             return
@@ -401,7 +511,8 @@ do
         local key = {}
         local verts, index = prefab.verts, prefab.index
 
-        if vtable and not vtableN then
+        local ownVtable = vtable and not vtableN
+        if ownVtable then
             vtable[#vtable + 1] = {}
             vtable = vtable[#vtable]
         end
@@ -419,6 +530,13 @@ do
             key[i] = n
 
             if vtable then vtable[#vtable + 1] = vertex end
+        end
+
+        if convexSimpletons and ownVtable then
+            local sub = simpleton.New()
+            sub.verts = vtable
+            sub.index = index
+            convexSimpletons[#convexSimpletons + 1] = sub
         end
 
         if pushindex then
@@ -923,6 +1041,36 @@ do
         belowPlane.key = {}
 
         return abovePlane, belowPlane
+    end
+
+
+    --[[
+        @FUNCTION: simpleton:ApplyClips
+
+        @DESCRIPTION: Cut a simpleton against a list of ImprovedClipping-style local clip planes, capping per each clip's Seal flag.
+
+        @PARAMETERS:
+            [table] clips -- { { Normal = vector, Distance = number, Seal = bool }, ... }, entity-local
+            [boolean] forceOpen -- leave every cut open regardless of the clips' Seal flags
+
+        @RETURN:
+            [table] the clipped simpleton, or false if the clips together removed the whole mesh
+    --]]
+    function meta:ApplyClips( clips, forceOpen )
+        if not clips or not clips[1] then return self end
+
+        local model = self
+
+        for i = 1, #clips do
+            local clip = clips[i]
+            local plane = { pos = clip.Normal * clip.Distance, normal = clip.Normal }
+
+            -- Only abovePlane is kept, so only it ever needs capping.
+            model = model:Bisect( plane, not forceOpen and clip.Seal, false )
+            if not model then return false end
+        end
+
+        return model
     end
 
 

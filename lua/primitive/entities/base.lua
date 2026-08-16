@@ -7,6 +7,16 @@ local SERVER = SERVER
 
 local class = { Type = "anim", Base = "base_anim", Spawnable = false, AdminOnly = true, IsPrimitive = true }
 
+-- Lets ImprovedClipping skip its own physics rebuild/render override; we apply clips ourselves.
+class.ImprovedClippingExternalMesh = true
+
+-- Registered unconditionally since ImprovedClipping's load order isn't guaranteed relative to ours.
+hook.Add( "ImprovedClipping_ClipsChanged", "primitive_clipping", function( ent )
+    if IsValid( ent ) and ent.IsPrimitive then
+        ent:PrimitiveReconstruct()
+    end
+end )
+
 
 function class:PrimitivePostEntityPaste( ply, ent, createdEntities )
     self:SetPrimDEBUG( 0 )
@@ -60,7 +70,8 @@ end
 
 function class:PrimitiveGetConstructSimple( name )
     local keys = self:PrimitiveGetKeys()
-    return Primitive.construct.get( name, keys, CLIENT, keys.PrimMESHPHYS )
+    local clips = ImprovedClipping and ImprovedClipping.GetClips( self )
+    return Primitive.construct.get( name, keys, CLIENT, keys.PrimMESHPHYS, clips )
 end
 
 
@@ -195,6 +206,10 @@ local function rescale( self, scalar )
 end
 
 function class:PrimitiveRebuildPhysics( result )
+    -- Rebuilding a parented primitive would cause issues with the hitbox. Unparent and reparent
+    local parent = SERVER and self:GetParent() or nil
+    if IsValid( parent ) then self:SetParent( nil ) end
+
     local props
     if SERVER then
         props = self:PrimitiveGetProperties()
@@ -254,6 +269,8 @@ function class:PrimitiveRebuildPhysics( result )
 
         self:PrimitiveSetProperties( props )
     end
+
+    if IsValid( parent ) then self:SetParent( parent ) end
 end
 
 
