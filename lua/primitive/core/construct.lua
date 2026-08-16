@@ -187,15 +187,18 @@ do
             return true, errorModel( 3, name )
         end
 
+        -- Whether this build is multi-convex, independent of whether there are any clips to apply
+        -- right now -- ImprovedClippingAllowSeal needs this even with zero stored clips.
+        local preConvexes = result.convexes
+        local preConvexSimpletons = result.convexSimpletons
+        local multiConvex = istable( preConvexSimpletons ) or ( istable( preConvexes ) and #preConvexes > 1 )
+        result.multiConvex = multiConvex
+
         -- ImprovedClipping delegation: bisect against every stored clip, capping per Seal.
         if clips and clips[1] and result.ApplyClips then
-            local preConvexes = result.convexes
-            local preConvexSimpletons = result.convexSimpletons
             local preVerts = result.verts
 
             -- Force the unitary render mesh's cut open when multi-convex, since its cross-section is concave and the cap fan only works on a convex loop.
-            local multiConvex = istable( preConvexSimpletons ) or ( istable( preConvexes ) and #preConvexes > 1 )
-
             local clipped = result:ApplyClips( clips, multiConvex )
 
             if clipped then
