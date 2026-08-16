@@ -174,7 +174,7 @@ do
         return result
     end
 
-    local function getResult( construct, name, param, threaded, physics )
+    local function getResult( construct, name, param, threaded, physics, clips )
         local success, result = pcall( construct.factory, param, construct.data, threaded, physics )
 
         -- lua error, error model CODE 2
@@ -185,6 +185,51 @@ do
         -- Bad return, error model CODE 3
         if not istable( result ) then
             return true, errorModel( 3, name )
+        end
+
+        -- Whether this build is multi-convex, independent of whether there are any clips to apply
+        -- right now -- ImprovedClippingAllowSeal needs this even with zero stored clips.
+        local preConvexes = result.convexes
+        local preConvexSimpletons = result.convexSimpletons
+        local multiConvex = istable( preConvexSimpletons ) or ( istable( preConvexes ) and #preConvexes > 1 )
+        result.multiConvex = multiConvex
+
+        -- ImprovedClipping delegation: bisect against every stored clip, capping per Seal.
+        if clips and clips[1] and result.ApplyClips then
+            local preVerts = result.verts
+
+            -- Force the unitary render mesh's cut open when multi-convex, since its cross-section is concave and the cap fan only works on a convex loop.
+            local clipped = result:ApplyClips( clips, multiConvex )
+
+            if clipped then
+                result = clipped
+
+                if istable( preConvexSimpletons ) then
+                    -- Multi-convex shapes: clip each piece's own triangulated simpleton individually.
+                    local newConvexes = {}
+
+                    for i = 1, #preConvexSimpletons do
+                        local clippedSub = preConvexSimpletons[i]:ApplyClips( clips )
+                        if clippedSub then
+                            newConvexes[#newConvexes + 1] = clippedSub.verts
+                        end
+                    end
+
+                    result.convexes = newConvexes
+                elseif istable( preConvexes ) and preConvexes[1] == preVerts then
+                    -- Single-convex shapes whose convex hull literally is their vertex table can be re-derived directly.
+                    result.convexes = { result.verts }
+                else
+                    -- Anything else keeps its original, unclipped convex hulls for now.
+                    result.convexes = preConvexes
+                end
+            else
+                result.verts = {}
+                result.index = {}
+                result.convexes = {}
+            end
+
+            result.multiConvex = multiConvex
         end
 
         -- Bad physics table, error model CODE 4
@@ -228,11 +273,12 @@ do
             [table] param      -- passed to the builder function
             [boolean] threaded -- return a coroutine (if possible)
             [boolean] physics  -- generate a collison model
+            [table] clips      -- ImprovedClipping clips to bisect the result against, optional
 
         @RETURN:
             either a function or a coroutine that will build the mesh
     --]]
-    function addon.construct.generate( construct, param, threaded, physics )
+    function addon.construct.generate( construct, param, threaded, physics, clips )
         if SERVER then threaded = nil end
 
         -- Non-existant construct, error model CODE 1
@@ -246,12 +292,12 @@ do
         -- Expected yield: true, true, table
         if threaded and construct.data.canThread then
             return true, coroutine.create( function()
-                coroutine_yield( getResult( construct, name, param, true, physics ) )
+                coroutine_yield( getResult( construct, name, param, true, physics, clips ) )
             end )
         end
 
         -- Expected return: true, table
-        return getResult( construct, name, param, false, physics )
+        return getResult( construct, name, param, false, physics, clips )
     end
 
 
@@ -265,11 +311,12 @@ do
             [table] param      -- passed to the builder function
             [boolean] threaded -- return a coroutine (if possible)
             [boolean] physics  -- generate a collison model
+            [table] clips      -- ImprovedClipping clips to bisect the result against, optional
 
         @RETURN:
             either a function or a coroutine that will build the mesh
     --]]
-    function addon.construct.get( name, param, threaded, physics )
+    function addon.construct.get( name, param, threaded, physics, clips )
         if param and param.PrimUNITS == "centimeters" then
             param = table.Copy( param )
             if isvector( param.PrimSIZE ) then
@@ -279,7 +326,7 @@ do
             if isnumber( param.PrimDT ) then param.PrimDT = math_max( param.PrimDT * 0.3937, MinSize ) end
             if isnumber( param.PrimSLANT ) then param.PrimSLANT = param.PrimSLANT * 0.3937 end
         end
-        return addon.construct.generate( construct_types[name], param, threaded, physics )
+        return addon.construct.generate( construct_types[name], param, threaded, physics, clips )
     end
 end
 
@@ -305,6 +352,72 @@ do
     --]]
     function simpleton.New()
         return setmetatable( { verts = {}, index = {}, key = {} }, meta )
+    end
+
+
+    --[[
+        @FUNCTION: simpleton:PushConvex
+
+        @DESCRIPTION: Register one physics convex piece: build a standalone sub-simpleton from a vertex list and a
+                      set of local-index face tuples, then append it to self.convexes/self.convexSimpletons (lazily
+                      created on first call). The counterpart to PushFace/PushTriangle for physics hulls -- those
+                      build self's own render index in place, this builds and registers a separate bisectable
+                      convex piece so ImprovedClipping can cut each one individually.
+
+        @PARAMETERS:
+            [table] verts -- vertex table, shared by reference (not copied)
+            [table] faces -- list of local-index tuples, e.g. { {1,2,3,4}, {5,6,7,8}, ... }
+
+        @RETURN:
+            [table] the pushed sub-simpleton
+    --]]
+    function meta:PushConvex( verts, faces )
+        if not self.convexes then
+            self.convexes = {}
+            self.convexSimpletons = {}
+        end
+
+        local sub = simpleton.New()
+        sub.verts = verts
+
+        for i = 1, #faces do
+            sub:PushFaceTable( faces[i] )
+        end
+
+        self.convexSimpletons[#self.convexSimpletons + 1] = sub
+        self.convexes[#self.convexes + 1] = sub.verts
+
+        return sub
+    end
+
+
+    --[[
+        @FUNCTION: simpleton:PushBoxConvex
+
+        @DESCRIPTION: PushConvex for a hexahedron described as two parallel 4-point loops (e.g. a top ring and a
+                      bottom ring), where top[i] and bottom[i] are the same corner on opposite loops. Generalizes
+                      the "8 verts, 6 quad faces" prism pattern shared by cube-like multi-convex shapes.
+
+        @PARAMETERS:
+            [table] verts  -- vertex table, shared by reference (not copied)
+            [table] top    -- 4 local indices into verts, one loop
+            [table] bottom -- 4 local indices into verts, the corresponding opposite loop
+
+        @RETURN:
+            [table] the pushed sub-simpleton
+    --]]
+    function meta:PushBoxConvex( verts, top, bottom )
+        local faces = {
+            top,
+            { bottom[4], bottom[3], bottom[2], bottom[1] },
+        }
+
+        for i = 1, 4 do
+            local j = i % 4 + 1
+            faces[#faces + 1] = { top[i], top[j], bottom[j], bottom[i] }
+        end
+
+        return self:PushConvex( verts, faces )
     end
 
 
@@ -388,11 +501,13 @@ do
             [boolean] pushindex
             [table] additional table to add vertices to (optional)
             [number] subtable id of ^, increments if not given (optional)
+            [table] if given, and vtable auto-nested a fresh subtable this call, appends a bisectable
+                    simpleton for that subtable's convex piece (sharing the prefab's own index) (optional)
 
         @RETURN:
             [table] key table of added vertices
     --]]
-    function meta:PushPrefab( name, pos, ang, scale, pushindex, vtable, vtableN )
+    function meta:PushPrefab( name, pos, ang, scale, pushindex, vtable, vtableN, convexSimpletons )
         local prefab = prefab_types[name]
         if not prefab then
             return
@@ -401,7 +516,8 @@ do
         local key = {}
         local verts, index = prefab.verts, prefab.index
 
-        if vtable and not vtableN then
+        local ownVtable = vtable and not vtableN
+        if ownVtable then
             vtable[#vtable + 1] = {}
             vtable = vtable[#vtable]
         end
@@ -419,6 +535,13 @@ do
             key[i] = n
 
             if vtable then vtable[#vtable + 1] = vertex end
+        end
+
+        if convexSimpletons and ownVtable then
+            local sub = simpleton.New()
+            sub.verts = vtable
+            sub.index = index
+            convexSimpletons[#convexSimpletons + 1] = sub
         end
 
         if pushindex then
@@ -868,8 +991,9 @@ do
             [table] plane -- the plane should have a pos and normal field
 
         @RETURN:
-            [table] abovePlane simpleton
-            [table] belowPlane simpleton
+            [table] abovePlane simpleton -- the piece to keep, or the original mesh unmodified if the plane
+                                          -- didn't cut it, or false if the plane removed the piece entirely
+            [table] belowPlane simpleton -- nil when the plane didn't cut the piece (nothing is discarded)
     --]]
     function meta:Bisect( plane, fillAbove, fillBelow )
         -- Separate original vertices into two tables, determined by
@@ -889,10 +1013,16 @@ do
             end
         end
 
-        -- If either mesh has a vertex count of 0, there are no
-        -- intersections and we can stop here.
-        if #abovePlane.verts == 0 or #belowPlane.verts == 0 then
-            return false
+        -- If either mesh has a vertex count of 0, the plane didn't
+        -- actually cut this piece, so skip the intersection loop.
+        local nothingBelow = #belowPlane.verts == 0
+        local nothingAbove = #abovePlane.verts == 0
+
+        if nothingBelow or nothingAbove then
+            -- nothingBelow: the whole piece is above the plane and is kept, unmodified.
+            -- nothingAbove: the whole piece is below the plane and is discarded entirely.
+            local kept = nothingBelow and self or false
+            return kept
         end
 
         -- Check each edge of each triangle for an intersection with the plane.
@@ -923,6 +1053,37 @@ do
         belowPlane.key = {}
 
         return abovePlane, belowPlane
+    end
+
+
+    --[[
+        @FUNCTION: simpleton:ApplyClips
+
+        @DESCRIPTION: Cut a simpleton against a list of ImprovedClipping-style local clip planes, capping per each clip's Seal flag.
+
+        @PARAMETERS:
+            [table] clips -- { { Normal = vector, Distance = number, Seal = bool }, ... }, entity-local
+            [boolean] forceOpen -- leave every cut open regardless of the clips' Seal flags
+
+        @RETURN:
+            [table] the clipped simpleton, or false if the clips together removed the whole mesh
+    --]]
+    function meta:ApplyClips( clips, forceOpen )
+        if not clips or not clips[1] then return self end
+
+        local model = self
+
+        for i = 1, #clips do
+            local clip = clips[i]
+            local plane = { pos = clip.Normal * clip.Distance, normal = clip.Normal }
+
+            -- Only abovePlane is kept, so only it ever needs capping.
+            local abovePlane = model:Bisect( plane, not forceOpen and clip.Seal, false )
+            if not abovePlane then return false end
+            model = abovePlane
+        end
+
+        return model
     end
 
 
@@ -1427,6 +1588,49 @@ registerType( "error", function( param, data, threaded, physics )
 end )
 
 
+-- part is [base center, apex, ring arc...]; fan-triangulate the side and bottom, and cap both angular
+-- ends (one end is the shape's own sector cut, the other a split introduced purely for convexity).
+-- Shared by CONE's sector split and CYLINDER's degenerate (apex) sector split.
+local function pushSectorConvex( model, part )
+    local n = #part - 2
+
+    local faces = {}
+    for k = 1, n - 1 do
+        faces[#faces + 1] = { 2, 2 + k, 2 + k + 1 } -- side (apex fan)
+        faces[#faces + 1] = { 1, 2 + k + 1, 2 + k } -- bottom (base-center fan)
+    end
+    faces[#faces + 1] = { 2, 1, 3 } -- start cap
+    faces[#faces + 1] = { 2, 1, 2 + n } -- end cap
+
+    model:PushConvex( part, faces )
+end
+
+
+-- vc1/vc2 are the bottom/top center verts; ringPairs[k] is { bottom_k, top_k }. Bottom ring fanned around
+-- vc1, top ring fanned around vc2, side quads between them, both angular ends capped with a flat quad.
+-- Used by CYLINDER's general-frustum sector split.
+local function pushFrustumSectorConvex( model, vc1, vc2, ringPairs )
+    local n = #ringPairs
+
+    local subVerts = { vc1, vc2 }
+    for k = 1, n do
+        subVerts[2 * k + 1] = ringPairs[k][1] -- bottom_k
+        subVerts[2 * k + 2] = ringPairs[k][2] -- top_k
+    end
+
+    local faces = {}
+    for k = 1, n - 1 do
+        faces[#faces + 1] = { 2 * k + 1, 2 * k + 3, 2 * k + 4, 2 * k + 2 } -- side quad
+        faces[#faces + 1] = { 2 * k + 1, 1, 2 * k + 3 } -- bottom fan
+        faces[#faces + 1] = { 2 * k + 2, 2 * k + 4, 2 } -- top fan
+    end
+    faces[#faces + 1] = { 1, 3, 4, 2 } -- start cap
+    faces[#faces + 1] = { 1, 2 * n + 1, 2 * n + 2, 2 } -- end cap
+
+    model:PushConvex( subVerts, faces )
+end
+
+
 -- CONE
 registerType( "cone", function( param, data, threaded, physics )
     local maxseg = param.PrimMAXSEG or 32
@@ -1456,7 +1660,7 @@ registerType( "cone", function( param, data, threaded, physics )
     model:PushXYZ( 0, 0, -dz )
     model:PushXYZ( -dx * tx, dy * ty, dz )
 
-    if CLIENT then
+    if CLIENT or physics then
         for i = 1, c0 - 1 do
             model:PushTriangle( i, i + 1, c2 )
             model:PushTriangle( i, c1, i + 1 )
@@ -1484,11 +1688,14 @@ registerType( "cone", function( param, data, threaded, physics )
                     table_insert( convexes[2], verts[i] )
                 end
             end
+
+            for h = 1, 2 do
+                pushSectorConvex( model, convexes[h] )
+            end
         else
             convexes = { verts }
+            model.convexes = convexes
         end
-
-        model.convexes = convexes
     end
 
     util_Transform( verts, param.PrimMESHROT, param.PrimMESHPOS, threaded )
@@ -1515,7 +1722,7 @@ registerType( "cube", function( param, data, threaded, physics )
         model:PushXYZ( -dx, dy, -dz )
         model:PushXYZ( 0, 0, dz )
 
-        if CLIENT then
+        if CLIENT or physics then
             model:PushTriangle( 1, 2, 5 )
             model:PushTriangle( 2, 4, 5 )
             model:PushTriangle( 4, 3, 5 )
@@ -1532,7 +1739,7 @@ registerType( "cube", function( param, data, threaded, physics )
         model:PushXYZ( -dx * tx, dy * ty, dz )
         model:PushXYZ( -dx * tx, -dy * ty, dz )
 
-        if CLIENT then
+        if CLIENT or physics then
             model:PushFace( 1, 2, 3, 4 )
             model:PushFace( 2, 6, 7, 3 )
             model:PushFace( 6, 5, 8, 7 )
@@ -1595,12 +1802,6 @@ registerType( "cube_magic", function( param, data, threaded, physics )
 
     local model = simpleton.New()
     local verts = model.verts
-
-    local convexes
-    if physics then
-        convexes = {}
-        model.convexes = convexes
-    end
 
     local ibuffer = 1
 
@@ -1670,16 +1871,13 @@ registerType( "cube_magic", function( param, data, threaded, physics )
 
             if physics then
                 local count = #verts
-                convexes[#convexes + 1] = {
-                    verts[count - 0],
-                    verts[count - 1],
-                    verts[count - 2],
-                    verts[count - 3],
-                    verts[count - 4],
-                    verts[count - 5],
-                    verts[count - 6],
-                    verts[count - 7],
-                }
+                model:PushConvex( {
+                    verts[count - 7], verts[count - 6], verts[count - 5], verts[count - 4],
+                    verts[count - 3], verts[count - 2], verts[count - 1], verts[count - 0],
+                }, {
+                    { 1, 3, 5, 7 }, { 4, 2, 8, 6 }, { 2, 1, 7, 8 },
+                    { 3, 4, 6, 5 }, { 6, 8, 7, 5 }, { 1, 2, 4, 3 },
+                } )
             end
 
             if CLIENT then
@@ -1734,18 +1932,10 @@ registerType( "cube_hole", function( param, data, threaded, physics )
         model:PushFace( 8, 7, 1, 4 )
     end
 
-    if physics then
-        convexes = {}
-        model.convexes = convexes
-    end
-
     for i = 0, numseg - 1 do
         vec_rotate( cube_corner0, cube_angle )
         vec_rotate( cube_corner1, cube_angle )
         vec_rotate( cube_corner2, cube_angle )
-
-        local part
-        if physics then part = {} end
 
         model:PushXYZ( cube_corner0.x * dx, cube_corner0.y * dy, -dz )
         model:PushXYZ( cube_corner1.x * dx, cube_corner1.y * dy, -dz )
@@ -1769,7 +1959,7 @@ registerType( "cube_hole", function( param, data, threaded, physics )
 
         local count_end1 = #verts
         if physics then
-            convexes[#convexes + 1] = {
+            model:PushBoxConvex( {
                 verts[count_end0 - 0],
                 verts[count_end0 - 3],
                 verts[count_end0 - 4],
@@ -1779,7 +1969,8 @@ registerType( "cube_hole", function( param, data, threaded, physics )
                 verts[count_end1 - ring_steps1 * 0.5],
                 verts[count_end1 - ring_steps1 * 0.5 - 1],
             }
-            convexes[#convexes + 1] = {
+            , { 1, 4, 5, 7 }, { 2, 3, 6, 8 } )
+            model:PushBoxConvex( {
                 verts[count_end0 - 2],
                 verts[count_end0 - 5],
                 verts[count_end0 - 4],
@@ -1789,6 +1980,7 @@ registerType( "cube_hole", function( param, data, threaded, physics )
                 verts[count_end1 - ring_steps1 * 0.5],
                 verts[count_end1 - ring_steps1 * 0.5 - 1],
             }
+            , { 1, 4, 5, 7 }, { 2, 3, 6, 8 } )
         end
 
         if CLIENT then
@@ -1853,7 +2045,7 @@ registerType( "cylinder", function( param, data, threaded, physics )
     model:PushXYZ( 0, 0, -dz )
     model:PushXYZ( 0, 0, dz )
 
-    if CLIENT then
+    if CLIENT or physics then
         if tx == 0 and ty == 0 then
             for i = 1, c0 - 1 do
                 model:PushTriangle( i, i + 1, c2 )
@@ -1879,10 +2071,8 @@ registerType( "cylinder", function( param, data, threaded, physics )
     end
 
     if physics then
-        local convexes
-
         if numseg ~= maxseg then
-            convexes = {
+            local convexes = {
                 { verts[c1], verts[c2] },
                 { verts[c1], verts[c2] },
             }
@@ -1896,21 +2086,31 @@ registerType( "cylinder", function( param, data, threaded, physics )
                         table_insert( convexes[2], verts[i] )
                     end
                 end
+
+                -- Degenerate (apex) cylinder: same split-fan topology as CONE's sector case above.
+                for h = 1, 2 do
+                    pushSectorConvex( model, convexes[h] )
+                end
             else
-                for i = 1, c0 do
+                -- General frustum: bottom ring fanned around c1, top ring fanned around c2, side quads
+                -- between them, each half capped at both angular ends with a flat (c1, bottom, top, c2) quad.
+                local halves = { {}, {} }
+                for i = 1, c0, 2 do
                     if i - ( maxseg > 3 and 2 or 1 ) <= maxseg then
-                        table_insert( convexes[1], verts[i] )
+                        table_insert( halves[1], { verts[i], verts[i + 1] } )
                     end
                     if i - 1 >= maxseg then
-                        table_insert( convexes[2], verts[i] )
+                        table_insert( halves[2], { verts[i], verts[i + 1] } )
                     end
+                end
+
+                for h = 1, 2 do
+                    pushFrustumSectorConvex( model, verts[c1], verts[c2], halves[h] )
                 end
             end
         else
-            convexes = { verts }
+            model.convexes = { verts }
         end
-
-        model.convexes = convexes
     end
 
     util_Transform( verts, param.PrimMESHROT, param.PrimMESHPOS, threaded )
@@ -2039,19 +2239,18 @@ registerType( "dome_hollow", function( param, data, threaded, physics )
 
         -- One convex per patch: four outer corners + four inner corners of each wall quad.
         -- This approximates the hollow shell as a set of thin wedge-shaped convex hulls.
-        local convexes = {}
         for r = 0, physNumseg2 - 1 do
             for v = 0, physNumseg - 1 do
                 local oa = 1 + r * physTwoRing + v * 2  -- bottom-left outer
                 local od = oa + physTwoRing             -- top-left outer
-                convexes[#convexes + 1] = {
+                model:PushBoxConvex( {
                     physVerts[oa],     physVerts[oa + 2], physVerts[od],     physVerts[od + 2],  -- outer quad corners
                     physVerts[oa + 1], physVerts[oa + 3], physVerts[od + 1], physVerts[od + 3],  -- inner quad corners
                 }
+                , { 1, 2, 4, 3 }, { 5, 6, 8, 7 } )
             end
         end
 
-        model.convexes = convexes
         util_Transform( physVerts, param.PrimMESHROT, param.PrimMESHPOS, threaded )
     end
 
@@ -2128,7 +2327,7 @@ registerType( "pyramid", function( param, data, threaded, physics )
     model:PushXYZ( -dx, dy, -dz )
     model:PushXYZ( -dx * tx, dy * ty, dz )
 
-    if CLIENT then
+    if CLIENT or physics then
         model:PushTriangle( 1, 2, 5 )
         model:PushTriangle( 2, 4, 5 )
         model:PushTriangle( 4, 3, 5 )
@@ -2210,6 +2409,7 @@ registerType( "sphere", function( param, data, threaded, physics )
                 end
 
                 model.convexes = { convex.verts }
+                model.convexSimpletons = { convex }
 
                 util_Transform( convex.verts, param.PrimMESHROT, param.PrimMESHPOS, threaded )
             end
@@ -2231,6 +2431,31 @@ registerType( "sphere", function( param, data, threaded, physics )
     return model
 
 end, { canThread = true } )
+
+
+-- part is numring quads forming a closed poloidal barrel between angle i and i+1. Cap both ends with the
+-- numring-gon ring of "front" (angle i) and "back" (angle i+1) points.
+-- Used by TORUS.
+local function pushBarrelConvex( model, part, numring )
+    local faces = {}
+    local front = { 2 }
+    local back = { 3 }
+
+    for j = 1, numring do
+        local base = 4 * ( j - 1 )
+        faces[#faces + 1] = { base + 1, base + 2, base + 3, base + 4 }
+
+        if j < numring then
+            front[#front + 1] = base + 1
+            back[#back + 1] = base + 4
+        end
+    end
+
+    faces[#faces + 1] = front
+    faces[#faces + 1] = table.Reverse( back )
+
+    model:PushConvex( part, faces )
+end
 
 
 -- TORUS
@@ -2297,20 +2522,17 @@ registerType( "torus", function( param, data, threaded, physics )
             end
         end
 
-        local convexes = {}
-        model.convexes = convexes
+        for i = 1, numseg do
+            local part = {}
 
-        for j = 1, numring do
-            for i = 1, numseg do
-                if not convexes[i] then
-                    convexes[i] = {}
-                end
-                local part = convexes[i]
+            for j = 1, numring do
                 part[#part + 1] = pverts[( maxseg + 1 ) * j + i]
                 part[#part + 1] = pverts[( maxseg + 1 ) * ( j - 1 ) + i]
                 part[#part + 1] = pverts[( maxseg + 1 ) * ( j - 1 ) + i + 1]
                 part[#part + 1] = pverts[( maxseg + 1 ) * j + i + 1]
             end
+
+            pushBarrelConvex( model, part, numring )
         end
 
         util_Transform( pverts, param.PrimMESHROT, param.PrimMESHPOS, threaded )
@@ -2399,16 +2621,15 @@ registerType( "tube", function( param, data, threaded, physics )
     end
 
     if physics then
-        local convexes = {}
-        model.convexes = convexes
-
         if iscone then
             for i = 1, c0 - 2, 2 do
-                convexes[#convexes + 1] = { verts[c2], verts[i], verts[i + 1], verts[i + 2], verts[i + 3] }
+                model:PushConvex( { verts[c2], verts[i], verts[i + 1], verts[i + 2], verts[i + 3] }
+                , { { 5, 4, 2, 3 }, { 2, 4, 1 }, { 5, 3, 1 }, { 1, 2, 3 }, { 1, 5, 4 } } )
             end
         else
             for i = 1, c0 - 4, 4 do
-                convexes[#convexes + 1] = { verts[i], verts[i + 1], verts[i + 2], verts[i + 3], verts[i + 4], verts[i + 5], verts[i + 6], verts[i + 7] }
+                model:PushBoxConvex( { verts[i], verts[i + 1], verts[i + 2], verts[i + 3], verts[i + 4], verts[i + 5], verts[i + 6], verts[i + 7] }
+                , { 1, 2, 3, 4 }, { 5, 6, 7, 8 } )
             end
         end
     end
@@ -2448,7 +2669,7 @@ registerType( "wedge", function( param, data, threaded, physics )
 
     end
 
-    if CLIENT then
+    if CLIENT or physics then
         if ty == 0 then
             model:PushTriangle( 1, 2, 5 )
             model:PushTriangle( 2, 4, 5 )
@@ -2493,7 +2714,7 @@ registerType( "wedge_corner", function( param, data, threaded, physics )
     model:PushXYZ( -dx, dy, -dz )
     model:PushXYZ( -dx * tx, dy * ty, dz )
 
-    if CLIENT then
+    if CLIENT or physics then
         model:PushTriangle( 1, 3, 4 )
         model:PushTriangle( 2, 1, 4 )
         model:PushTriangle( 3, 2, 4 )
@@ -2532,7 +2753,7 @@ registerType( "parallelogram", function( param, data, threaded, physics )
     model:PushXYZ( -dx + shift, -dy,  dz )  -- 7 top y- x-
     model:PushXYZ( -dx + shift,  dy,  dz )  -- 8 top y+ x-
 
-    if CLIENT then
+    if CLIENT or physics then
         model:PushFace( 1, 2, 3, 4 )  -- bottom (-z)
         model:PushFace( 5, 8, 7, 6 )  -- top (+z)
         model:PushFace( 1, 4, 8, 5 )  -- y+ side
@@ -2822,6 +3043,7 @@ end )
 registerType( "rail_slider", function( param, data, threaded, physics )
     local model = simpleton.New()
     model.convexes = {}
+    model.convexSimpletons = {}
 
     -- base
     local bpos = isvector( param.PrimBPOS ) and Vector( param.PrimBPOS ) or Vector( 1, 1, 1 )
@@ -2839,7 +3061,7 @@ registerType( "rail_slider", function( param, data, threaded, physics )
 
     -- base
     if tobool( param.PrimBASE ) then
-        model:PushPrefab( "cube", bpos, nil, bdim, CLIENT, model.convexes )
+        model:PushPrefab( "cube", bpos, nil, bdim, CLIENT, model.convexes, nil, model.convexSimpletons )
     end
 
     -- contact point
@@ -2883,7 +3105,7 @@ registerType( "rail_slider", function( param, data, threaded, physics )
                     pos = pos - ( rot:Right() * ( fdim.y * 0.5 + cdim.y * 0.5 ) * side.y )
                     pos = pos + ( rot:Up() * ( cdim.z * 0.5 - fdim.z * 0.5 ) )
 
-                    model:PushPrefab( ftype, pos, rot, fdim, CLIENT, model.convexes )
+                    model:PushPrefab( ftype, pos, rot, fdim, CLIENT, model.convexes, nil, model.convexSimpletons )
                 end
             end
         end
@@ -2900,13 +3122,13 @@ registerType( "rail_slider", function( param, data, threaded, physics )
             local rot = Angle( -crot.p * side.x, crot.y * side.x * side.y, crot.r * side.y )
 
             pos.x = pos.x + ( cdim.x * side.x * 0.5 )
-            model:PushPrefab( ctype, pos, rot, cdim, CLIENT, model.convexes )
+            model:PushPrefab( ctype, pos, rot, cdim, CLIENT, model.convexes, nil, model.convexSimpletons )
 
             if getflange then getflange( i, pos, rot, side ) end
 
             if double then
                 pos = pos - ( rot:Right() * side.y * cgap )
-                model:PushPrefab( ctype, pos, rot, cdim, CLIENT, model.convexes )
+                model:PushPrefab( ctype, pos, rot, cdim, CLIENT, model.convexes, nil, model.convexSimpletons )
             end
         end
     end
@@ -2927,10 +3149,6 @@ registerType( "staircase", function( param, data, threaded, physics )
     local model = simpleton.New()
     local verts = model.verts
 
-    if physics then
-        model.convexes = {}
-    end
-
     for i = 0, count - 1 do
         local a = model:PushXYZ( run * i, width, rise * i )
         local b = model:PushXYZ( run * i, width, rise * i + rise )
@@ -2941,7 +3159,7 @@ registerType( "staircase", function( param, data, threaded, physics )
         local f = model:CopyVertex( c, nil, -width, nil )
 
         if physics then
-            model.convexes[#model.convexes + 1] = {
+            model:PushConvex( {
                 verts[a],
                 verts[b],
                 verts[c],
@@ -2949,6 +3167,10 @@ registerType( "staircase", function( param, data, threaded, physics )
                 verts[e],
                 verts[f],
             }
+            , {
+                { 1, 2, 3 }, { 6, 5, 4 },
+                { 1, 2, 5, 4 }, { 2, 3, 6, 5 }, { 3, 1, 4, 6 },
+            } )
         end
 
         if CLIENT then
@@ -2970,7 +3192,7 @@ registerType( "staircase", function( param, data, threaded, physics )
         local b = model:PushXYZ( run * count, -width,  0 )
 
         if physics then
-            model.convexes[#model.convexes + 1] = {
+            model:PushConvex( {
                 verts[count * 6 - 3],
                 verts[count * 6],
                 verts[1],
@@ -2978,6 +3200,10 @@ registerType( "staircase", function( param, data, threaded, physics )
                 verts[a],
                 verts[b]
             }
+            , {
+                { 3, 5, 1 }, { 2, 6, 4 },
+                { 3, 5, 6, 4 }, { 5, 1, 2, 6 }, { 1, 3, 4, 2 },
+            } )
         end
 
         if CLIENT then
@@ -3010,6 +3236,7 @@ registerType( "ladder", function( param, data, threaded, physics )
 
     if physics then
         model.convexes = {}
+        model.convexSimpletons = {}
     end
 
     local isSolid = bit.band( tonumber( param.PrimSOPT ) or 0, 1 ) == 1
@@ -3025,12 +3252,12 @@ registerType( "ladder", function( param, data, threaded, physics )
     local rz = math_min( height, math_clamp( rdim.z, 1, 50 ) )
 
     for i = 0, count - 1 do
-        model:PushPrefab( "cube", Vector( 0, 0, height * i ), Angle(), Vector( rx, ry, rz ), CLIENT, not isSolid and model.convexes )
+        model:PushPrefab( "cube", Vector( 0, 0, height * i ), Angle(), Vector( rx, ry, rz ), CLIENT, not isSolid and model.convexes, nil, not isSolid and model.convexSimpletons )
     end
 
     if isSolid and physics then
         local size = height * ( count - 1 )
-        model:PushPrefab( "cube", Vector( 0, 0, size * 0.5 ), Angle(), Vector( rx, ry, size + rz ), nil, model.convexes )
+        model:PushPrefab( "cube", Vector( 0, 0, size * 0.5 ), Angle(), Vector( rx, ry, size + rz ), nil, model.convexes, nil, model.convexSimpletons )
     end
 
     -- rail
@@ -3043,8 +3270,8 @@ registerType( "ladder", function( param, data, threaded, physics )
 
         local xsize = Vector( xx, xy, height * ( count - 1 ) + xz )
 
-        model:PushPrefab( "cube", Vector( 0, ry * 0.5 + xy * 0.5, xsize.z * 0.5 - xz * 0.5 ), Angle(), xsize, CLIENT, model.convexes )
-        model:PushPrefab( "cube", Vector( 0, -ry * 0.5 - xy * 0.5, xsize.z * 0.5 - xz * 0.5 ), Angle(), xsize, CLIENT, model.convexes )
+        model:PushPrefab( "cube", Vector( 0, ry * 0.5 + xy * 0.5, xsize.z * 0.5 - xz * 0.5 ), Angle(), xsize, CLIENT, model.convexes, nil, model.convexSimpletons )
+        model:PushPrefab( "cube", Vector( 0, -ry * 0.5 - xy * 0.5, xsize.z * 0.5 - xz * 0.5 ), Angle(), xsize, CLIENT, model.convexes, nil, model.convexSimpletons )
     end
 
     util_Transform( model.verts, param.PrimMESHROT, param.PrimMESHPOS, threaded )
