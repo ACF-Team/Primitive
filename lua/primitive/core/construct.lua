@@ -225,6 +225,8 @@ do
                 result.index = {}
                 result.convexes = {}
             end
+
+            result.multiConvex = multiConvex
         end
 
         -- Bad physics table, error model CODE 4

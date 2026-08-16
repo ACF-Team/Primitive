@@ -71,7 +71,12 @@ end
 function class:PrimitiveGetConstructSimple( name )
     local keys = self:PrimitiveGetKeys()
     local clips = ImprovedClipping and ImprovedClipping.GetClips( self )
-    return Primitive.construct.get( name, keys, CLIENT, keys.PrimMESHPHYS, clips )
+    local valid, result = Primitive.construct.get( name, keys, CLIENT, keys.PrimMESHPHYS, clips )
+
+    -- Clips should not be sealed for multi convex (the hole could be concave and that's out of scope).
+    self.ImprovedClippingAllowSeal = not ( istable( result ) and result.multiConvex )
+
+    return valid, result
 end
 
 
