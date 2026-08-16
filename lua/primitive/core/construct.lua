@@ -986,8 +986,9 @@ do
             [table] plane -- the plane should have a pos and normal field
 
         @RETURN:
-            [table] abovePlane simpleton
-            [table] belowPlane simpleton
+            [table] abovePlane simpleton -- the piece to keep, or the original mesh unmodified if the plane
+                                          -- didn't cut it, or false if the plane removed the piece entirely
+            [table] belowPlane simpleton -- nil when the plane didn't cut the piece (nothing is discarded)
     --]]
     function meta:Bisect( plane, fillAbove, fillBelow )
         -- Separate original vertices into two tables, determined by
@@ -1007,10 +1008,16 @@ do
             end
         end
 
-        -- If either mesh has a vertex count of 0, there are no
-        -- intersections and we can stop here.
-        if #abovePlane.verts == 0 or #belowPlane.verts == 0 then
-            return false
+        -- If either mesh has a vertex count of 0, the plane didn't
+        -- actually cut this piece, so skip the intersection loop.
+        local nothingBelow = #belowPlane.verts == 0
+        local nothingAbove = #abovePlane.verts == 0
+
+        if nothingBelow or nothingAbove then
+            -- nothingBelow: the whole piece is above the plane and is kept, unmodified.
+            -- nothingAbove: the whole piece is below the plane and is discarded entirely.
+            local kept = nothingBelow and self or false
+            return kept
         end
 
         -- Check each edge of each triangle for an intersection with the plane.
@@ -1066,8 +1073,9 @@ do
             local plane = { pos = clip.Normal * clip.Distance, normal = clip.Normal }
 
             -- Only abovePlane is kept, so only it ever needs capping.
-            model = model:Bisect( plane, not forceOpen and clip.Seal, false )
-            if not model then return false end
+            local abovePlane = model:Bisect( plane, not forceOpen and clip.Seal, false )
+            if not abovePlane then return false end
+            model = abovePlane
         end
 
         return model
