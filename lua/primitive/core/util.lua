@@ -64,6 +64,9 @@ if SERVER then
         ent:Spawn()
         ent:Activate()
 
+        -- Avoid race conditions by initializing flags before entity modifiers are applied...
+        ent:PrimitiveGetConstruct()
+
         if IsValid( ply ) then
             ent:SetVar( "Player", ply )
             ply:AddCount( "props", ent )
