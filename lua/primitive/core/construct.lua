@@ -3279,3 +3279,26 @@ registerType( "ladder", function( param, data, threaded, physics )
     return model
 end )
 
+
+-- CONVEX_HULL: hands raw points to PhysicsInitMultiConvex and leaves .index empty;
+-- convex_hull.lua re-triangulates the render mesh from the physics engine's own hull once it exists.
+registerType( "convex_hull", function( param, data, threaded, physics )
+    local model = simpleton.New()
+
+    local count = math_clamp( math_floor( tonumber( param.PrimPOINTS ) or 6 ), 4, 10 )
+
+    for i = 1, count do
+        local x = tonumber( param[ "PrimPX" .. i ] ) or 0
+        local y = tonumber( param[ "PrimPY" .. i ] ) or 0
+        local z = tonumber( param[ "PrimPZ" .. i ] ) or 0
+
+        model:PushXYZ( x, y, z )
+    end
+
+    if physics then model.convexes = { model.verts } end
+
+    util_Transform( model.verts, param.PrimMESHROT, param.PrimMESHPOS, threaded )
+
+    return model
+end )
+
