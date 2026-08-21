@@ -4,6 +4,7 @@ CreateConVar( "primitive_thread_runtime", 0.25, { FCVAR_ARCHIVE }, "max thread r
 
 Primitive = { funcs = {}, classes = {} }
 Primitive.minSize = 0.4
+Primitive.spawnCooldown = 0.1
 
 if SERVER then
     AddCSLuaFile( "primitive/load.lua" )

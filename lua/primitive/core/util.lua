@@ -72,8 +72,13 @@ if SERVER then
         return ent
     end
 
+    local nextSpawn = {}
+
     concommand.Add( "primitive_spawn", function( ply, _, args )
         if not IsValid( ply ) or not Primitive or not Primitive.classes then return end
+
+        if ( nextSpawn[ply] or 0 ) > SysTime() then return end
+        nextSpawn[ply] = SysTime() + Primitive.spawnCooldown
 
         local class = table.remove( args, 1 )
         if not Primitive.classes[class] then return end
