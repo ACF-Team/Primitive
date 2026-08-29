@@ -234,11 +234,9 @@ function class:PrimitiveRebuildPhysics( result )
             -- (see the Think() workaround above for the related bug). This works empirically. Trust me bro.
             local physobj = self:GetPhysicsObject()
 
-            if physobj:IsValid() then
-                physobj:EnableMotion( false )
-                physobj:SetPos( self:GetPos() )
-                physobj:SetAngles( self:GetAngles() )
-                physobj:Wake()
+            if IsValid(physobj) then
+                physobj:EnableMotion(false)
+                physobj:Sleep()
             end
         end
     end
@@ -432,11 +430,10 @@ function class:Think()
         -- switched it to Sleep for a reason: see https://github.com/Facepunch/garrysmod-issues/issues/6426
         local physobj = self:GetPhysicsObject()
 
-        if physobj:IsValid() then
-            physobj:EnableMotion( false )
-            physobj:SetPos( self:GetPos() )
-            physobj:SetAngles( self:GetAngles() )
-        end
+		if IsValid(physobj) then
+			physobj:EnableMotion(false)
+			physobj:Sleep()
+		end
     end
 end
 
