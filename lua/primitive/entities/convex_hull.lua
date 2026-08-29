@@ -19,8 +19,6 @@ do
         local clips = ImprovedClipping and ImprovedClipping.GetClips( self )
         local valid, result = Primitive.construct.get( "convex_hull", keys, CLIENT, keys.PrimMESHPHYS, clips )
 
-        self.ImprovedClippingAllowSeal = not ( istable( result ) and result.multiConvex )
-
         return valid, result
     end
 

@@ -1,7 +1,10 @@
 
 CreateConVar( "primitive_update_delay", 0.015, { FCVAR_ARCHIVE }, "update delay in seconds, lower is faster", 0.0015, 0.5 )
-CreateConVar( "primitive_thread_runtime", 0.25, { FCVAR_ARCHIVE }, "max thread runtime in seconds, higher is faster", 0.0015, 0.5 )
-
+CreateConVar( "primitive_thread_runtime", 0.003, { FCVAR_ARCHIVE }, "max mesh-generation time per frame in seconds, higher is faster but hitchier", 0.0005, 0.5 )
+local primitive_thread_runtime = GetConVar("primitive_thread_runtime")
+if primitive_thread_runtime:GetFloat() == 0.25 then
+    primitive_thread_runtime:SetFloat(0.003) -- remove this later; needed since fcvar_archive my behated
+end
 Primitive = { funcs = {}, classes = {} }
 Primitive.minSize = 0.4
 Primitive.spawnCooldown = 0.1

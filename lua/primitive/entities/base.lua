@@ -73,8 +73,8 @@ function class:PrimitiveGetConstructSimple( name )
     local clips = ImprovedClipping and ImprovedClipping.GetClips( self )
     local valid, result = Primitive.construct.get( name, keys, CLIENT, keys.PrimMESHPHYS, clips )
 
-    -- Clips should not be sealed for multi convex (the hole could be concave and that's out of scope).
-    self.ImprovedClippingAllowSeal = not ( istable( result ) and result.multiConvex )
+    -- ImprovedClippingAllowSeal is set in constructFromTable once the final build table is known.
+    -- (When threaded, result here is a coroutine, so multiConvex isn't available yet.)
 
     return valid, result
 end
@@ -234,11 +234,9 @@ function class:PrimitiveRebuildPhysics( result )
             -- (see the Think() workaround above for the related bug). This works empirically. Trust me bro.
             local physobj = self:GetPhysicsObject()
 
-            if physobj:IsValid() then
-                physobj:EnableMotion( false )
-                physobj:SetPos( self:GetPos() )
-                physobj:SetAngles( self:GetAngles() )
-                physobj:Wake()
+            if IsValid(physobj) then
+                physobj:EnableMotion(false)
+                physobj:Sleep()
             end
         end
     end
@@ -291,6 +289,8 @@ end
 
 
 local function constructFromTable( self, result )
+    self.ImprovedClippingAllowSeal = not ( istable( result ) and result.multiConvex )
+
     self:PrimitiveRebuildPhysics( result )
 
     if CLIENT then
@@ -328,10 +328,8 @@ end
 local updateTime = GetConVar( "primitive_update_delay" )
 local threadTime = GetConVar( "primitive_thread_runtime" )
 
-local function resume( self )
-    local t = SysTime()
-
-    while SysTime() - t < 0.0015 do --threadTime:GetFloat() do
+local function resume( self, deadline )
+    while SysTime() < deadline do
         local success, err, result = coroutine.resume( self.primitive.thread )
 
         if not success or ( err and not result ) then
@@ -378,19 +376,27 @@ hook.Add( "Think", "Primitive_Async_Generation", function()
         return
     end
 
-    local ent = next( queue )
-    overlay = ent
+    local deadline = SysTime() + threadTime:GetFloat()
 
-    if not IsValid( ent ) or not istable( ent.primitive ) or type( ent.primitive.thread ) ~= "thread" then
-        queue[ent] = nil
-        overlay = nil
+    while SysTime() < deadline do
+        local ent = next( queue )
+        if ent == nil then
+            queue = nil
+            break
+        end
 
-        return
-    end
+        overlay = ent
 
-    if resume( ent ) then
-        queue[ent] = nil
-        overlay = nil
+        if not IsValid( ent ) or not istable( ent.primitive ) or type( ent.primitive.thread ) ~= "thread" then
+            queue[ent] = nil
+            overlay = nil
+        elseif resume( ent, deadline ) then
+            queue[ent] = nil
+            overlay = nil
+        else
+            -- Ran out of budget. resume next frame
+            break
+        end
     end
 end )
 
@@ -420,14 +426,14 @@ function class:Think()
 
         -- workaround for clientside physics bug
         -- https://github.com/Facepunch/garrysmod-issues/issues/5060
-
+        -- I have concerns that returning back to SetPos/SetAngles is problematic. I
+        -- switched it to Sleep for a reason: see https://github.com/Facepunch/garrysmod-issues/issues/6426
         local physobj = self:GetPhysicsObject()
 
-        if physobj:IsValid() then
-            physobj:EnableMotion( false )
-            physobj:SetPos( self:GetPos() )
-            physobj:SetAngles( self:GetAngles() )
-        end
+		if IsValid(physobj) then
+			physobj:EnableMotion(false)
+			physobj:Sleep()
+		end
     end
 end
 

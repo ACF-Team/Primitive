@@ -290,7 +290,7 @@ do
         local name = construct.data.name
 
         -- Expected yield: true, true, table
-        if threaded and construct.data.canThread then
+        if threaded and construct.data.canThread ~= false then
             return true, coroutine.create( function()
                 coroutine_yield( getResult( construct, name, param, true, physics, clips ) )
             end )
@@ -2539,7 +2539,7 @@ registerType( "torus", function( param, data, threaded, physics )
     end
 
     return model
-end, { canthread = true } )
+end, { canThread = true } )
 
 
 -- TUBE
