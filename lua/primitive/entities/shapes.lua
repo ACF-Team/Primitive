@@ -151,7 +151,7 @@ do
 
     function class:PrimitiveOnSetup( initial, args )
         if initial and SERVER then
-            duplicator.StoreEntityModifier( self, "mass", { Mass = 24 } )
+            duplicator.StoreEntityModifier( self, "mass", { Mass = 100 } )
         end
 
         local type, physics, uv = unpack( args )
@@ -319,7 +319,7 @@ do
 
     function class:PrimitiveOnSetup( initial, args )
         if initial and SERVER then
-            duplicator.StoreEntityModifier( self, "mass", { Mass = 24 } )
+            duplicator.StoreEntityModifier( self, "mass", { Mass = 100 } )
         end
 
         self:SetPrimAFM( 2 )
@@ -393,7 +393,7 @@ do
 
     function class:PrimitiveOnSetup( initial, args )
         if initial and SERVER then
-            duplicator.StoreEntityModifier( self, "mass", { Mass = 24 } )
+            duplicator.StoreEntityModifier( self, "mass", { Mass = 100 } )
         end
 
         local type, physics, uv = unpack( args )
