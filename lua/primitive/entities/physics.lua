@@ -23,7 +23,7 @@ do
 
     function class:PrimitiveOnSetup( initial, args )
         if initial and SERVER then
-            duplicator.StoreEntityModifier( self, "mass", { Mass = 100 } )
+            duplicator.StoreEntityModifier( self, "mass", { Mass = 24 } )
         end
 
         self:SetPrimSOPT( bit.bor( 2 ) )
@@ -84,7 +84,7 @@ do
 
     function class:PrimitiveOnSetup( initial, args )
         if initial and SERVER then
-            duplicator.StoreEntityModifier( self, "mass", { Mass = 100 } )
+            duplicator.StoreEntityModifier( self, "mass", { Mass = 24 } )
         end
 
         self:SetPrimSOPT( 1 )
@@ -157,7 +157,7 @@ do
 
     function class:PrimitiveOnSetup( initial, args )
         if initial and SERVER then
-            duplicator.StoreEntityModifier( self, "mass", { Mass = 100 } )
+            duplicator.StoreEntityModifier( self, "mass", { Mass = 24 } )
             duplicator.StoreBoneModifier( self, 0, "physprops", { GravityToggle = true, Material = "gmod_ice" } )
         end
 
@@ -263,7 +263,7 @@ do
 
         function class:PrimitiveOnSetup( initial, args )
             if initial and SERVER then
-                duplicator.StoreEntityModifier( self, "mass", { Mass = 100 } )
+                duplicator.StoreEntityModifier( self, "mass", { Mass = 24 } )
                 duplicator.StoreBoneModifier( self, 0, "physprops", { GravityToggle = true, Material = "gmod_ice" } )
             end
 
