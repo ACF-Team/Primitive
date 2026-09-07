@@ -355,12 +355,16 @@ local queue, overlay
 
 if CLIENT then
 
+    local SHOW_GENERATING_OVERLAY = false
+
     hook.Add( "HUDPaint", "Primitive_Async_Overlay", function()
         if overlay then
             if not IsValid( overlay ) then overlay = nil return end
 
-            local pos = overlay:GetPos():ToScreen()
-            draw.SimpleText( "Generating primitive...", "DermaDefault", pos.x, pos.y, color_white )
+            if SHOW_GENERATING_OVERLAY then
+                local pos = overlay:GetPos():ToScreen()
+                draw.SimpleText( "Generating primitive...", "DermaDefault", pos.x, pos.y, color_white )
+            end
         end
     end )
 
