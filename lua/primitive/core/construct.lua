@@ -853,7 +853,7 @@ do
         CLIPPING ENGINE
     ]]
     local function pushClippedTriangle( self, a, b, c )
-        if not a or not b or not c then print( a, b, c ) return end
+        -- if not a or not b or not c then print( "pushclippedtriangle", a, b, c ) return end
 
         local v0 = self.key[a]
         local v1 = self:PushVertex( b )
