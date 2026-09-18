@@ -1006,11 +1006,13 @@ do
         local planeNormal = plane.normal
 
         for i = 1, #self.verts do
+            if self.verts[i] == nil then goto continue_bisect_vert end
             if vec_dot( planeNormal, self.verts[i] - planePos ) >= 1e-6 then
                 abovePlane.key[i] = abovePlane:PushVertex( self.verts[i] )
             else
                 belowPlane.key[i] = belowPlane:PushVertex( self.verts[i] )
             end
+            ::continue_bisect_vert::
         end
 
         -- If either mesh has a vertex count of 0, the plane didn't
@@ -1594,6 +1596,9 @@ end )
 local function pushSectorConvex( model, part )
     local n = #part - 2
 
+    -- No ring vertices means this sector is empty (degenerate split); nothing to push.
+    if n < 1 then return end
+
     local faces = {}
     for k = 1, n - 1 do
         faces[#faces + 1] = { 2, 2 + k, 2 + k + 1 } -- side (apex fan)
@@ -1611,6 +1616,9 @@ end
 -- Used by CYLINDER's general-frustum sector split.
 local function pushFrustumSectorConvex( model, vc1, vc2, ringPairs )
     local n = #ringPairs
+
+    -- Fewer than 2 ring pairs can't form a closed sector (start/end caps need distinct verts); skip.
+    if n < 2 then return end
 
     local subVerts = { vc1, vc2 }
     for k = 1, n do
@@ -2437,6 +2445,9 @@ end, { canThread = true } )
 -- numring-gon ring of "front" (angle i) and "back" (angle i+1) points.
 -- Used by TORUS.
 local function pushBarrelConvex( model, part, numring )
+    -- No rings means this barrel segment is empty (degenerate split); nothing to push.
+    if numring < 1 then return end
+
     local faces = {}
     local front = { 2 }
     local back = { 3 }
