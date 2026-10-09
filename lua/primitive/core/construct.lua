@@ -201,20 +201,31 @@ do
             -- Force the unitary render mesh's cut open when multi-convex, since its cross-section is concave and the cap fan only works on a convex loop.
             local clipped = result:ApplyClips( clips, multiConvex )
 
+            -- Multi-convex physics is built from each piece's own simpleton, so the pieces decide whether anything is left.
+            local newConvexes
+            if istable( preConvexSimpletons ) then
+                newConvexes = {}
+
+                for i = 1, #preConvexSimpletons do
+                    local clippedSub = preConvexSimpletons[i]:ApplyClips( clips )
+                    if clippedSub then
+                        newConvexes[#newConvexes + 1] = clippedSub.verts
+                    end
+                end
+
+                -- The unitary mesh has no triangle index when physics are built without a render mesh (the server), so
+                -- bisecting it only discards vertices, and it reports "removed" when none lies inside every plane. A shape
+                -- whose pieces overshoot the clips (e.g. a ladder cut to a rotated outline) has no such vertex, yet most of
+                -- its pieces survive: keep the uncut mesh rather than throwing the physics away.
+                if not clipped and #newConvexes > 0 then
+                    clipped = result
+                end
+            end
+
             if clipped then
                 result = clipped
 
-                if istable( preConvexSimpletons ) then
-                    -- Multi-convex shapes: clip each piece's own triangulated simpleton individually.
-                    local newConvexes = {}
-
-                    for i = 1, #preConvexSimpletons do
-                        local clippedSub = preConvexSimpletons[i]:ApplyClips( clips )
-                        if clippedSub then
-                            newConvexes[#newConvexes + 1] = clippedSub.verts
-                        end
-                    end
-
+                if newConvexes then
                     result.convexes = newConvexes
                 elseif istable( preConvexes ) and preConvexes[1] == preVerts then
                     -- Single-convex shapes whose convex hull literally is their vertex table can be re-derived directly.
