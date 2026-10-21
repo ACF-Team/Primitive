@@ -35,4 +35,4 @@ function PANEL:Setup( editData )
 end
 
 
-derma.DefineControl( "DTreeEditorBase_Checkbox", "", PANEL, "DTreeEditorBase_Generic" )
+vgui.Register( "DTreeEditorBase_Checkbox", PANEL, "DTreeEditorBase_Generic" )

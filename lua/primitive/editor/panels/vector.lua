@@ -160,4 +160,4 @@ function PANEL:Setup( editData )
 end
 
 
-derma.DefineControl( "DTreeEditorBase_Vector", "", PANEL, "DTreeEditorBase_Generic" )
+vgui.Register( "DTreeEditorBase_Vector", PANEL, "DTreeEditorBase_Generic" )

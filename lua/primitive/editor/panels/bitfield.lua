@@ -85,4 +85,4 @@ function PANEL:Setup( editData )
 end
 
 
-derma.DefineControl( "DTreeEditorBase_Bitfield", "", PANEL, "DTreeEditorBase_Generic" )
+vgui.Register( "DTreeEditorBase_Bitfield", PANEL, "DTreeEditorBase_Generic" )
