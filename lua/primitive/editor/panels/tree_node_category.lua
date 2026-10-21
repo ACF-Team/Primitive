@@ -56,7 +56,7 @@ end
 
 
 function PANEL:AddNode( strName )
-    local pNode = DTreeEditorBase_Node.AddNode( self, strName )
+    local pNode = vgui.GetControlTable( "DTreeEditorBase_Node" ).AddNode( self, strName )
 
     if not self.pNodeFirst then
         self.pNodeFirst = pNode
@@ -72,4 +72,4 @@ function PANEL:OnNodeAdded( pNode )
 end
 
 
-derma.DefineControl( "DTreeEditorBase_Category", "", PANEL, "DTree_Node" )
+vgui.Register( "DTreeEditorBase_Category", PANEL, "DTree_Node" )

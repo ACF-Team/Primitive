@@ -7,7 +7,6 @@
 ]]
 
 local PANEL = {}
-PANEL.AllowAutoRefresh = true
 
 surface.CreateFont( "DTreeEditorBaseSmall", { font = "Arial", size = 14 } )
 surface.CreateFont( "DTreeEditorBaseLarge", { font = "Arial Bold", size = 14 } )
@@ -36,9 +35,6 @@ end
 function PANEL:OnWindowStopDragging()
 end
 
-function PANEL:PreAutoRefresh()
-end
-
 function PANEL:HideRow( name, hide )
     if self.rows[name] then
         self.rows[name]:SetVisible( hide )
@@ -52,12 +48,6 @@ function PANEL:HideCategory( name, hide )
         self:InvalidateChildren( true )
     end
 end
-
-
-function PANEL:PostAutoRefresh()
-    self:RebuildControls()
-end
-
 
 function PANEL:Init()
     self.categories = {}
@@ -349,4 +339,4 @@ function PANEL:WindowStopDragging()
 end
 
 
-derma.DefineControl( "DTreeEditorBase", "", PANEL, "DTree" )
+vgui.Register( "DTreeEditorBase", PANEL, "DTree" )
